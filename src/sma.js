@@ -27,29 +27,22 @@ export function assertPeriod(period) {
   }
 }
 
-// Average of the window ending at `index`; null if the window is incomplete
-// or contains a non-finite value (NaN, null, Infinity) or overflows.
-export function smaAt(candles, index, period, source) {
-  assertPeriod(period);
-  if (index < period - 1 || index >= candles.length) return null;
-  let sum = 0;
-  for (let i = index - period + 1; i <= index; i++) {
-    const v = sourceValue(candles[i], source);
-    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
-    sum += v;
-  }
-  const avg = sum / period;
-  return Number.isFinite(avg) ? avg : null;
-}
-
-// Full SMA series as chart points {time, value}; points with no valid value are skipped.
+// Full SMA series as chart points {time, value}; a window with a non-finite value
+// (NaN, null, Infinity) or an overflowing sum produces no point.
 export function computeSMA(candles, period, source = 'close') {
   assertPeriod(period);
   sourceValue(candles[0] ?? {}, source); // validate source name early
   const out = [];
-  for (let i = period - 1; i < candles.length; i++) {
-    const value = smaAt(candles, i, period, source);
-    if (value !== null) out.push({ time: candles[i].time, value });
+  for (let end = period - 1; end < candles.length; end++) {
+    let sum = 0;
+    let valid = true;
+    for (let i = end - period + 1; i <= end && valid; i++) {
+      const v = sourceValue(candles[i], source);
+      if (typeof v !== 'number' || !Number.isFinite(v)) valid = false;
+      else sum += v;
+    }
+    const value = sum / period;
+    if (valid && Number.isFinite(value)) out.push({ time: candles[end].time, value });
   }
   return out;
 }

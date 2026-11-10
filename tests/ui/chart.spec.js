@@ -1,4 +1,4 @@
-import { test, expect, open, smaData, candleData, text, probeSmaLine } from './fixtures.js';
+import { test, expect, open, smaData, candleData, text, probeSmaLine, offsetFromExpected } from './fixtures.js';
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
@@ -80,10 +80,7 @@ test.describe('price display', () => {
 test.describe('visual check on the real canvas', () => {
   test('SMA line is drawn exactly where its last value should be', async ({ page }) => {
     await open(page);
-    const { expectedY, ys } = await probeSmaLine(page);
-    expect(ys.length).toBeGreaterThan(0);
-    const mean = ys.reduce((a, b) => a + b, 0) / ys.length;
-    expect(Math.abs(mean - expectedY)).toBeLessThanOrEqual(3);
+    expect(offsetFromExpected(await probeSmaLine(page))).toBeLessThanOrEqual(3);
   });
 
   test('the line moves when the source changes', async ({ page }) => {
@@ -92,9 +89,8 @@ test.describe('visual check on the real canvas', () => {
     await page.getByTestId('source').selectOption('low');
     const b = await probeSmaLine(page);
     const mean = (ys) => ys.reduce((x, y) => x + y, 0) / ys.length;
-    expect(b.ys.length).toBeGreaterThan(0);
+    expect(offsetFromExpected(b)).toBeLessThanOrEqual(3);
     expect(mean(b.ys)).toBeGreaterThan(mean(a.ys)); // SMA(low) is below SMA(close): larger y
-    expect(Math.abs(mean(b.ys) - b.expectedY)).toBeLessThanOrEqual(3);
   });
 
   test('the whole line is drawn: orange pixels exist across the chart', async ({ page }) => {
@@ -193,10 +189,10 @@ test.describe('strange data', () => {
     await page.getByTestId('scenario').selectOption('huge');
     const expected = sanitizeCandles(SCENARIOS.huge()).candles;
     await expect(page.getByTestId('last-close')).toHaveText(fmt(expected.at(-1).close));
-    const { expectedY, ys, height } = await probeSmaLine(page);
-    expect(expectedY).toBeGreaterThan(0);
-    expect(expectedY).toBeLessThan(height);
-    expect(ys.length).toBeGreaterThan(0);
+    const probe = await probeSmaLine(page);
+    expect(probe.expectedY).toBeGreaterThan(0);
+    expect(probe.expectedY).toBeLessThan(probe.height);
+    expect(offsetFromExpected(probe)).toBeLessThanOrEqual(3);
   });
 
   test('empty data: legend shows dashes, switching back restores the chart', async ({ page }) => {

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { test, expect, open, smaData, candleData, probeSmaLine } from './fixtures.js';
-import { refSMA, expectSeriesClose } from '../unit/helpers.js';
+import { test, expect, open, smaData, candleData, probeSmaLine, offsetFromExpected } from './fixtures.js';
+import { refSMA, refEMA, refBB, refRSI, expectSeriesClose } from '../unit/helpers.js';
 
 // Real BTCUSDT 1m klines saved from Binance. Only the network is replaced; parsing, SMA and drawing are real.
 const RAW = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url)));
@@ -86,10 +86,7 @@ test.describe('history', () => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
     // the chart finishes its layout a moment after the async data arrives
-    await expect.poll(async () => {
-      const { expectedY, ys } = await probeSmaLine(page);
-      return ys.length ? Math.abs(ys.reduce((a, b) => a + b, 0) / ys.length - expectedY) : 999;
-    }).toBeLessThanOrEqual(3);
+    await expect.poll(async () => offsetFromExpected(await probeSmaLine(page))).toBeLessThanOrEqual(3);
   });
 });
 
@@ -338,5 +335,57 @@ test.describe('leaving live mode', () => {
     await expect(page.getByTestId('status')).toContainText('Streaming is available');
     await page.waitForTimeout(500);
     await expect(page.getByTestId('bar-count')).toHaveText('50');
+  });
+});
+
+test.describe('other indicators on real data', () => {
+  // Golden values calculated outside JavaScript (Python, Decimal) from the same 50 bars.
+  test('EMA 20 and 5', async ({ page }) => {
+    await goLive(page, await mockBinance(page));
+    await page.getByTestId('indicator').selectOption('ema');
+    await expect(page.getByTestId('last-sma')).toHaveText('73346.25');
+    await page.getByTestId('period').fill('5');
+    await expect(page.getByTestId('last-sma')).toHaveText('73429.15');
+  });
+
+  test('Bollinger (20, 2) and (10, 3)', async ({ page }) => {
+    await goLive(page, await mockBinance(page));
+    await page.getByTestId('indicator').selectOption('bb');
+    await expect(page.getByTestId('last-bb-upper')).toHaveText('73476.76');
+    await expect(page.getByTestId('last-sma')).toHaveText('73310.66');
+    await expect(page.getByTestId('last-bb-lower')).toHaveText('73144.57');
+    await page.getByTestId('period').fill('10');
+    await page.getByTestId('mult').fill('3');
+    await expect(page.getByTestId('last-bb-upper')).toHaveText('73589.62');
+    await expect(page.getByTestId('last-sma')).toHaveText('73361.73');
+    await expect(page.getByTestId('last-bb-lower')).toHaveText('73133.83');
+  });
+
+  test('RSI 14 and 5', async ({ page }) => {
+    await goLive(page, await mockBinance(page));
+    await page.getByTestId('indicator').selectOption('rsi');
+    await expect(page.getByTestId('last-sma')).toHaveText('57.94');
+    await page.getByTestId('period').fill('5');
+    await expect(page.getByTestId('last-sma')).toHaveText('77.71');
+  });
+
+  test('live ticks update every indicator on real data', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    const expected = [...CANDLES, { time: T0 / 1000 + 60, open: 73488, high: 73600, low: 73400, close: 73550, volume: 1 }];
+    mock.sockets[0].ws.send(klineMsg({ t: T0 + 60000, o: 73488, h: 73600, l: 73400, c: 73550 }));
+    await expect(page.getByTestId('bar-count')).toHaveText('51');
+    const cases = [
+      ['ema', 20, (c) => ({ ema: refEMA(c, 20, 'close') })],
+      ['bb', 20, (c) => refBB(c, 20, 2, 'close')],
+      ['rsi', 14, (c) => ({ rsi: refRSI(c, 14, 'close') })],
+    ];
+    for (const [kind, , ref] of cases) {
+      await page.getByTestId('indicator').selectOption(kind);
+      const want = ref(expected);
+      for (const [key, points] of Object.entries(want)) {
+        expectSeriesClose(await page.evaluate((k) => window.__app.lineData(k), key), points);
+      }
+    }
   });
 });

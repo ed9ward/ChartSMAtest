@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeSMA, smaAt, sourceValue, SOURCES } from '../../src/sma.js';
+import { computeSMA, sourceValue, SOURCES } from '../../src/sma.js';
 import { generateCandles } from '../../src/generator.js';
 import { refSMA, expectSeriesClose } from './helpers.js';
 
@@ -84,14 +84,15 @@ describe('strange values', () => {
   });
 });
 
-describe('realtime: incremental update equals full recompute', () => {
-  it('updating the last (forming) candle', () => {
+describe('realtime: a forming candle changes only the last SMA point', () => {
+  it('updating the last candle', () => {
     const data = candles.slice(0, 50).map((c) => ({ ...c }));
+    const before = computeSMA(data, 20, 'close');
     for (const close of [90, 95.5, 101.25]) {
       data[49].close = close;
-      const last = computeSMA(data, 20, 'close').at(-1);
-      expect(smaAt(data, 49, 20, 'close')).toBeCloseTo(last.value, 10);
-      expect(last.value).toBeCloseTo(refSMA(data, 20, 'close').at(-1).value, 8);
+      const after = computeSMA(data, 20, 'close');
+      expect(after.slice(0, -1)).toEqual(before.slice(0, -1));
+      expect(after.at(-1).value).toBeCloseTo(refSMA(data, 20, 'close').at(-1).value, 8);
     }
   });
   it('appending a new candle shifts the window by one', () => {
@@ -100,10 +101,6 @@ describe('realtime: incremental update equals full recompute', () => {
     const after = computeSMA(candles.slice(0, 41), 10, 'hl2');
     expect(after.slice(0, -1)).toEqual(before);
     expect(after.at(-1).time).toBe(candles[40].time);
-  });
-  it('smaAt returns null before the window is full and past the end', () => {
-    expect(smaAt(candles, 3, 5, 'close')).toBeNull();
-    expect(smaAt(candles, 500, 5, 'close')).toBeNull();
   });
 });
 

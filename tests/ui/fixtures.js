@@ -21,20 +21,14 @@ export const smaData = (page) => page.evaluate(() => window.__app.smaData());
 export const candleData = (page) => page.evaluate(() => window.__app.candleData());
 export const text = (page, id) => page.getByTestId(id).textContent();
 
-// Reads the real chart canvas: finds orange (SMA line) pixels in the column of the last SMA point.
-export function probeSmaLine(page) {
-  return page.evaluate(() => {
-    const { chart, smaSeries } = window.__app;
-    const last = smaSeries.data().at(-1);
-    const x = Math.round(chart.timeScale().timeToCoordinate(last.time)) - 1; // the line ends at the bar centre
-    const expectedY = smaSeries.priceToCoordinate(last.value);
-    const canvas = chart.takeScreenshot();
-    const px = canvas.getContext('2d').getImageData(x, 0, 1, canvas.height).data;
-    const ys = [];
-    for (let y = 0; y < canvas.height; y++) {
-      const r = px[y * 4], g = px[y * 4 + 1], b = px[y * 4 + 2];
-      if (r > 220 && g > 120 && g < 215 && b < 140 && r - b > 120) ys.push(y); // orange, also when anti-aliased
-    }
-    return { expectedY, ys, height: canvas.height };
-  });
+// Where the line of `key` (default: the main line) is drawn and where it should be; see probeLine in src/app.js.
+export const probeLine = (page, key) => page.evaluate((k) => window.__app.probeLine(k), key);
+export const probeSmaLine = (page) => probeLine(page);
+
+// Distance in px between where the line is drawn and where it should be; 999 when there is no thin line at all.
+// maxSpread: how tall the found pixels may be (a 2 px line is ~4 rows, a steep one up to ~8).
+export function offsetFromExpected(probe, maxSpread = 12) {
+  if (!probe || probe.ys.length === 0) return 999;
+  if (Math.max(...probe.ys) - Math.min(...probe.ys) > maxSpread) return 999; // not a thin line: the colour match is too loose
+  return Math.abs(probe.ys.reduce((a, b) => a + b, 0) / probe.ys.length - probe.expectedY);
 }

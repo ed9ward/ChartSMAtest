@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Self-checks</title>
+  <style>
+    :root { --ok: #2e7d32; --bad: #c62828; --muted: #666; --line: #ddd; }
+    html { overflow-y: scroll; } /* keep the width stable while the result list grows */
+    body { font: 14px system-ui, sans-serif; margin: 16px; color: #222; background: #fff; }
+    a { color: #1565c0; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+    button { font-size: 14px; padding: 6px 14px; cursor: pointer; }
+    button:disabled { cursor: default; }
+    progress { width: 100%; height: 18px; }
+    #summary { display: flex; gap: 20px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+    #summary b { font-weight: 600; }
+    #verdict { font-weight: 600; margin: 8px 0; min-height: 1.4em; }
+    #verdict.ok { color: var(--ok); } #verdict.bad { color: var(--bad); }
+    #current { color: var(--muted); min-height: 1.4em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+    .left { flex: 1 1 520px; min-width: 0; }
+    .right { flex: 1 1 480px; }
+    table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+    td.num, th.num { text-align: right; }
+    td.failed.some { color: var(--bad); font-weight: 600; }
+    td progress { height: 8px; width: 90px; }
+    tr.done-ok td:first-child::after { content: " ✓"; color: var(--ok); }
+    tr.done-bad td:first-child::after { content: " ✗"; color: var(--bad); }
+    details { margin: 6px 0; }
+    summary { cursor: pointer; }
+    ul.list { list-style: none; margin: 4px 0 8px; padding-left: 14px; font-size: 13px; }
+    ul.list li { display: flex; gap: 8px; }
+    ul.list .ms { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+    li.ok::before { content: "✓"; color: var(--ok); } li.fail::before { content: "✗"; color: var(--bad); }
+    li.fail { color: var(--bad); }
+    li .err { display: block; font-size: 12px; }
+    iframe { width: 100%; height: 640px; border: 1px solid var(--line); }
+    .hint { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Self-checks</h1>
+  <div class="hint"><a href="index.html">← back to the chart</a> · every indicator is compared with an independent reference, then the real page is driven the way a user would</div>
+
+  <div class="row">
+    <button id="run" data-testid="run">Run all checks</button>
+    <label><input type="checkbox" id="include-ui" data-testid="include-ui" checked> include UI checks (drives the chart on the right)</label>
+    <label><input type="checkbox" id="watch" data-testid="watch"> watch mode (a short pause after each check)</label>
+    <span id="state" data-testid="state" class="hint">idle</span>
+  </div>
+
+  <progress id="bar" data-testid="progress" max="1" value="0"></progress>
+  <div id="summary">
+    <span>Done: <b id="counter" data-testid="counter">0 / 0</b></span>
+    <span>Passed: <b id="passed" data-testid="passed">0</b></span>
+    <span>Failed: <b id="failed" data-testid="failed">0</b></span>
+    <span>Time: <b id="elapsed" data-testid="elapsed">0 ms</b></span>
+  </div>
+  <div id="verdict" data-testid="verdict"></div>
+  <div id="current" data-testid="current"></div>
+
+  <div class="layout">
+    <div class="left">
+      <table>
+        <thead><tr><th>Indicator / area</th><th class="num">Checks</th><th class="num">Passed</th><th class="num">Failed</th><th class="num">Time</th><th></th></tr></thead>
+        <tbody id="groups" data-testid="groups"></tbody>
+      </table>
+      <div id="details" data-testid="details"></div>
+    </div>
+    <div class="right">
+      <iframe id="app" title="chart under test"></iframe>
+    </div>
+  </div>
+
+  <script type="module" src="checks/page.js"></script>
+</body>
+</html>
