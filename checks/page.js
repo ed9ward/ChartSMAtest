@@ -16,6 +16,33 @@ const realRows = () => (rowsPromise ??= fetch('tests/fixtures/btcusdt-1m.json').
   return r.json();
 }));
 
+let talibPromise;
+const talibReference = () => (talibPromise ??= fetch('tests/fixtures/talib-reference.json').then((r) => {
+  if (!r.ok) throw new Error(`could not load the TA-Lib reference: HTTP ${r.status}`);
+  return r.json();
+}));
+
+const pct = (part, whole) => (whole ? `${((100 * part) / whole).toFixed(part === whole ? 0 : 2)}%` : '–');
+const diffText = (x) => (x === 0 ? '0' : x < 1e-6 ? x.toExponential(1) : x.toFixed(6));
+
+function addStatsRow(stats) {
+  $('stats').hidden = false;
+  const tr = document.createElement('tr');
+  tr.dataset.testid = `stat-${stats.datasetId}-${stats.indicator.toLowerCase().replace(/\s+/g, '-')}`;
+  const ok = stats.identical === stats.compared && stats.cents === stats.compared;
+  tr.innerHTML = `<td></td><td></td><td class="num compared"></td><td class="num identical${ok ? ' ok' : ''}"></td>
+    <td class="num cents${ok ? ' ok' : ''}"></td><td class="num max"></td><td class="num mean"></td>`;
+  const cells = tr.children;
+  cells[0].textContent = stats.dataset;
+  cells[1].textContent = `${stats.indicator} (${stats.series} series)`;
+  cells[2].textContent = stats.compared;
+  cells[3].textContent = `${stats.identical} (${pct(stats.identical, stats.compared)})`;
+  cells[4].textContent = `${stats.cents} (${pct(stats.cents, stats.compared)})`;
+  cells[5].textContent = diffText(stats.maxDiff);
+  cells[6].textContent = diffText(stats.meanDiff);
+  $('stats-body').append(tr);
+}
+
 const rowFor = (g) => {
   const tr = document.createElement('tr');
   tr.dataset.testid = `group-${g.id}`;
@@ -35,6 +62,8 @@ async function run() {
   $('verdict').className = '';
   $('groups').replaceChildren();
   $('details').replaceChildren();
+  $('stats-body').replaceChildren();
+  $('stats').hidden = true;
   for (const id of ['passed', 'failed']) text($(id), 0);
 
   const startedAt = performance.now();
@@ -45,7 +74,7 @@ async function run() {
   let failed = 0;
 
   try {
-    const ctx = { realRows, realCandles: async () => (await realRows()).map(parseKline) };
+    const ctx = { realRows, talibReference, realCandles: async () => (await realRows()).map(parseKline) };
     if (withUi) ctx.ui = await createUiDriver($('app')).load(bug ? `?bug=${encodeURIComponent(bug)}` : '');
 
     const summary = await runChecks(buildGroups(ctx), {
@@ -67,6 +96,7 @@ async function run() {
         }
       },
       onCheck(r) {
+        if (r.detail?.stats) addStatsRow(r.detail.stats);
         r.ok ? passed++ : failed++;
         $('bar').value = r.index;
         text($('counter'), `${r.index} / ${r.total}`);

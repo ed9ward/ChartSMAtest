@@ -17,6 +17,68 @@ async function runAndWait(page, timeout = 60_000) {
   await expect(state(page)).toHaveText('finished', { timeout });
 }
 
+test.describe('comparison with TA-Lib', () => {
+  test.setTimeout(90_000);
+
+  test('the stats table is hidden before the run and lists every indicator on both data sets afterwards', async ({ page }) => {
+    await page.goto('/checks.html');
+    await expect(page.getByTestId('stats')).toBeHidden();
+    await page.getByTestId('include-ui').uncheck();
+    await runAndWait(page);
+    await expect(page.getByTestId('stats')).toBeVisible();
+    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(8);
+    for (const dataset of ['real50', 'walk300']) {
+      for (const indicator of ['sma', 'ema', 'bollinger-bands', 'rsi']) {
+        const row = page.getByTestId(`stat-${dataset}-${indicator}`);
+        await expect(row).toBeVisible();
+        const compared = await number(row.locator('.compared'));
+        expect(compared).toBeGreaterThan(500);
+        await expect(row.locator('.identical')).toHaveText(`${compared} (100%)`);
+        await expect(row.locator('.cents')).toHaveText(`${compared} (100%)`);
+        await expect(row.locator('.identical')).toHaveClass(/ok/);
+        await expect(row.locator('.max')).toHaveText(/e-1\d$|^0$/); // difference at the 1e-10 rounding of the reference file
+      }
+    }
+    await expect(page.getByTestId('group-talib')).toContainText('Comparison with TA-Lib');
+    await expect(page.getByTestId('verdict')).toHaveText(/^All \d+ checks passed/);
+  });
+
+  test('a tampered reference value shows up in the table and fails the check', async ({ page }) => {
+    await page.route('**/talib-reference.json', async (route) => {
+      const json = await (await route.fetch()).json();
+      const series = json.datasets[0].series.find((s) => s.indicator === 'sma' && s.source === 'close' && s.period === 14);
+      series.lines.sma = series.lines.sma.map((v, i) => (v !== null && i % 10 === 0 ? v + 0.5 : v)); // every 10th value is off by 50 cents
+      await route.fulfill({ json });
+    });
+    await page.goto('/checks.html');
+    await page.getByTestId('include-ui').uncheck();
+    await runAndWait(page);
+    const row = page.getByTestId('stat-real50-sma');
+    const compared = await number(row.locator('.compared'));
+    const identical = Number((await row.locator('.identical').textContent()).split(' ')[0]);
+    expect(identical).toBeLessThan(compared);
+    expect(identical).toBeGreaterThan(compared - 10);
+    await expect(row.locator('.identical')).not.toHaveClass(/ok/);
+    await expect(row.locator('.max')).toHaveText('0.500000');
+    await expect(page.getByTestId('verdict')).toHaveText(/1 of \d+ checks failed/);
+    await expect(page.getByTestId('details-talib').locator('li.fail')).toContainText('values differ');
+    // the other seven comparisons are unaffected
+    await expect(row.locator('xpath=following-sibling::tr').first()).toBeVisible();
+    await expect(page.getByTestId('stat-real50-ema').locator('.identical')).toHaveClass(/ok/);
+  });
+
+  test('the reference file failing to load is reported, not silently skipped', async ({ page, errors }) => {
+    await page.route('**/talib-reference.json', (route) => route.fulfill({ status: 404, body: 'no' }));
+    await page.goto('/checks.html');
+    await page.getByTestId('include-ui').uncheck();
+    await runAndWait(page);
+    await expect(page.getByTestId('verdict')).toHaveText(/8 of \d+ checks failed/);
+    await expect(page.getByTestId('details-talib').locator('li.fail').first()).toContainText('HTTP 404');
+    expect(errors).toEqual(['Failed to load resource: the server responded with a status of 404 (Not Found)']);
+    errors.length = 0;
+  });
+});
+
 test.describe('self-checks page', () => {
   test.setTimeout(90_000);
 

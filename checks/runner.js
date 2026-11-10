@@ -1,5 +1,5 @@
 // Runs groups of checks one after another, times each of them and reports progress.
-// A check is { name, ui?: boolean, run(): void | Promise<void> }; throwing means "failed".
+// A check is { name, ui?: boolean, run(): any | Promise<any> }; throwing means "failed", a returned value is kept as `detail`.
 
 export async function runChecks(groups, { include = () => true, pauseMs = 0, onStart, onCheck, onGroupDone } = {}) {
   const selected = groups
@@ -20,16 +20,18 @@ export async function runChecks(groups, { include = () => true, pauseMs = 0, onS
     for (const check of group.checks) {
       const t0 = performance.now();
       let error = null;
+      let detail;
       try {
-        await check.run();
+        detail = await check.run();
       } catch (e) {
         error = e?.message ?? String(e);
+        detail = e?.detail; // a failing check may still report its numbers
       }
       const ms = performance.now() - t0;
       summary.ms += ms;
       checkMs += ms;
       if (error) summary.failed++; else summary.passed++;
-      const result = { group: group.id, name: check.name, ui: !!check.ui, ok: !error, error, ms };
+      const result = { group: group.id, name: check.name, ui: !!check.ui, ok: !error, error, ms, detail };
       results.push(result);
       onCheck?.({ ...result, groupTitle: group.title, index: ++index, total });
       if (pauseMs > 0 || performance.now() - lastYield > 30) { // let the page repaint now and then

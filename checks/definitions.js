@@ -9,6 +9,7 @@ import { parseKline, parseKlineMessage, dayChangePercent, formatPercent } from '
 import { refSMA, refEMA, refBB, refRSI, compareSeries } from './reference.js';
 import { expectedBars } from './data.js';
 import { assert, equal, close, throws } from './assert.js';
+import { compareIndicator } from './compare.js';
 
 const DATA = generateCandles({ seed: 42, count: 300 });
 const candle = (time, value) => ({ time, open: value, high: value, low: value, close: value, volume: 100 });
@@ -325,10 +326,38 @@ function binanceGroup(ctx) {
   };
 }
 
-/** @param ctx { realRows(): Promise<rows>, realCandles(): Promise<candles>, ui?: driver } */
+// Statistics against TA-Lib: every value of every series must be identical (floating point noise aside).
+function talibGroup(ctx) {
+  const titles = { sma: 'SMA', ema: 'EMA', bb: 'Bollinger Bands', rsi: 'RSI' };
+  const checks = [];
+  for (const datasetId of ['real50', 'walk300']) {
+    for (const indicator of ['sma', 'ema', 'bb', 'rsi']) {
+      checks.push({
+        name: `${titles[indicator]} on ${datasetId} equals TA-Lib`,
+        run: async () => {
+          const dataset = (await ctx.talibReference()).datasets.find((d) => d.id === datasetId);
+          assert(dataset, `dataset ${datasetId} is not in the reference file`);
+          const stats = compareIndicator(dataset, indicator);
+          const detail = { stats: { ...stats, dataset: dataset.title, datasetId, indicator: titles[indicator] } };
+          const fail = (message) => Object.assign(new Error(message), { detail }); // the table still shows the numbers
+          if (stats.compared === 0) throw fail('nothing was compared');
+          if (stats.missing || stats.extra) throw fail(`${stats.missing} values missing, ${stats.extra} unexpected`);
+          if (stats.identical !== stats.compared) {
+            throw fail(`${stats.compared - stats.identical} of ${stats.compared} values differ, worst: ${JSON.stringify(stats.worst)}`);
+          }
+          return detail;
+        },
+      });
+    }
+  }
+  return { id: 'talib', title: 'Comparison with TA-Lib', checks };
+}
+
+/** @param ctx { realRows(): Promise<rows>, realCandles(): Promise<candles>, talibReference(): Promise<reference file>, ui?: driver } */
 export function buildGroups(ctx) {
   return [
     ...['sma', 'ema', 'bb', 'rsi'].map((kind) => indicatorGroup(kind, ctx)),
+    talibGroup(ctx),
     dataGroup(ctx),
     binanceGroup(ctx),
   ];

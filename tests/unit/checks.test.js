@@ -5,11 +5,12 @@ import { runChecks } from '../../checks/runner.js';
 import { parseKline } from '../../src/live.js';
 
 const rows = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url)));
-const ctx = { realRows: async () => rows, realCandles: async () => rows.map(parseKline) };
+const talib = JSON.parse(readFileSync(new URL('../fixtures/talib-reference.json', import.meta.url)));
+const ctx = { realRows: async () => rows, realCandles: async () => rows.map(parseKline), talibReference: async () => talib };
 
 describe('the in-page check suite (everything that does not need a browser)', () => {
   it('has the expected groups', () => {
-    expect(buildGroups(ctx).map((g) => g.id)).toEqual(['sma', 'ema', 'bb', 'rsi', 'data', 'binance']);
+    expect(buildGroups(ctx).map((g) => g.id)).toEqual(['sma', 'ema', 'bb', 'rsi', 'talib', 'data', 'binance']);
   });
 
   it('all checks pass and each group reports its time', async () => {
@@ -17,7 +18,7 @@ describe('the in-page check suite (everything that does not need a browser)', ()
     const summary = await runChecks(buildGroups(ctx), { include: (c) => !c.ui, onCheck: (e) => events.push(e.index) });
     expect(summary.failed).toBe(0);
     expect(summary.total).toBe(summary.passed);
-    expect(summary.total).toBeGreaterThan(150);
+    expect(summary.total).toBeGreaterThan(180);
     expect(events).toEqual(Array.from({ length: summary.total }, (_, i) => i + 1));
     for (const g of summary.groups) expect(g.ms).toBeGreaterThanOrEqual(0);
   });
