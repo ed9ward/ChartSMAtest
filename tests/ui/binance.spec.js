@@ -544,6 +544,57 @@ test.describe('update time and change per day', () => {
   });
 });
 
+test.describe('lost and repeated live messages', () => {
+  // A Binance kline message is a snapshot of the whole bar so far (cumulative volume, highest high, lowest low), so a
+  // message that is lost is repaired by the next one, and a repeated one changes nothing. (Unlike Coinbase's single trades.)
+  test('a repeated identical message changes nothing and is not reported', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    const msg = klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73500, v: 3 });
+    mock.sockets[0].ws.send(msg);
+    await expect(page.getByTestId('last-close')).toHaveText('73500.00');
+    const once = { candles: await candleData(page), sma: await smaData(page) };
+    for (let i = 0; i < 5; i++) mock.sockets[0].ws.send(msg);
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73501, v: 3 })); // a different one proves the repeats were processed
+    await expect(page.getByTestId('last-close')).toHaveText('73501.00');
+    expect((await candleData(page)).slice(0, -1)).toEqual(once.candles.slice(0, -1));
+    await expect(page.getByTestId('bar-count')).toHaveText('50');
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m');
+  });
+
+  test('a lost message inside a bar is repaired by the next one: volume, high and low are all there', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    const ws = mock.sockets[0].ws;
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73490, l: 73482, c: 73488, v: 2 }));
+    // two messages never arrive: the one with the new high 73600 and the one with the new low 73400 ...
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73400, c: 73450, v: 9 })); // ... the next one carries both, and the volume so far
+    await expect(page.getByTestId('last-close')).toHaveText('73450.00');
+    expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0 / 1000, open: 73484, high: 73600, low: 73400, close: 73450 });
+    await page.getByTestId('source').selectOption('volume');
+    await page.getByTestId('period').fill('1');
+    await expect(page.getByTestId('last-sma')).toHaveText('9.00');
+  });
+
+  test('a lost message that opens a new bar: the next message of that bar is enough', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.send(klineMsg({ t: T0 + 60000, o: 73500, h: 73520, l: 73490, c: 73510, v: 4 })); // the first message of the new bar never came
+    await expect(page.getByTestId('bar-count')).toHaveText('51');
+    expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0 / 1000 + 60, open: 73500, high: 73520, low: 73490, close: 73510 });
+  });
+
+  test('an older state of a bar arriving after a newer one is not detected as such (no sequence number exists): the newest message wins', async ({ page }) => {
+    // documented limit: the stream is one ordered TCP connection, and Binance sends no id that could reveal reordering
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    const ws = mock.sockets[0].ws;
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73400, c: 73450, v: 9 }));
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73490, l: 73482, c: 73488, v: 2 }));
+    await expect(page.getByTestId('last-close')).toHaveText('73488.00');
+  });
+});
+
 test.describe('impossible candles', () => {
   const MSG = 'dropped 3 inconsistent candle(s) (impossible high/low or negative volume)';
 

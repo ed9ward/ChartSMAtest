@@ -1,5 +1,7 @@
 // Binance public market data (no API key): REST history + WebSocket kline stream.
 
+import { assertLimit } from './limit.js';
+
 export const INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 export const KLINES_URL = 'https://api.binance.com/api/v3/klines';
 export const WS_URL = 'wss://stream.binance.com:9443/ws';
@@ -34,8 +36,13 @@ export function parseKlineMessage(data, { symbol, interval } = {}) {
   return { candle, closed: k.x === true };
 }
 
+export const MAX_KLINES = 1000; // per request
+
+/** The newest `limit` candles. `limit` must be a non-negative integer: 0 gives an empty list without a request, above 1000 is cut to 1000. */
 export async function fetchHistory({ symbol, interval, limit = 500, signal, fetchFn = fetch }) {
-  const url = `${KLINES_URL}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+  assertLimit(limit);
+  if (limit === 0) return [];
+  const url = `${KLINES_URL}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Math.min(limit, MAX_KLINES)}`;
   const res = await fetchFn(url, { signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();

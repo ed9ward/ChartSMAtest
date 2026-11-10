@@ -165,6 +165,25 @@ export const INDICATORS = {
   },
 };
 
+/**
+ * EMA and RSI are recursive: every value still carries a part of the value the calculation started from, and that part
+ * shrinks by a constant factor on every bar. This is how many bars of history it takes until the start has faded to
+ * `tolerance` of its original weight (0.1% by default): (1 - alpha) ^ n <= tolerance, alpha = 2 / (period + 1) for the
+ * EMA and 1 / period for the RSI. With less history than that, the last values depend on where the history happens to
+ * begin, so they can differ from a platform that loads more. SMA and Bollinger Bands have no such dependence (0).
+ *
+ * The history needs the warm-up (the bars before the first value: `period` for the RSI, period - 1 for the EMA with the SMA
+ * start), then that many bars of fading, and one more because the last value sits `n` steps after the first one.
+ */
+export function settleBars(kind, period, { start = 'first', tolerance = 1e-3 } = {}) {
+  assertPeriod(period);
+  if (kind !== 'ema' && kind !== 'rsi') return 0;
+  const alpha = kind === 'ema' ? 2 / (period + 1) : 1 / period;
+  const fade = alpha >= 1 ? 0 : Math.ceil(Math.log(tolerance) / Math.log(1 - alpha)); // alpha 1: the start is forgotten at once
+  const warmup = kind === 'rsi' ? period : start === 'sma' ? period - 1 : 0;
+  return warmup + fade + 1;
+}
+
 export function validateParams(kind, params) {
   assertPeriod(params.period);
   if (kind === 'bb') assertMultiplier(params.mult);

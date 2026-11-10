@@ -10,6 +10,11 @@ export const REFERENCE_SPEC = {
   datasets: [
     { id: 'real50', candles: 50, sources: SOURCES, periods: [5, 14, 20] },
     { id: 'walk300', candles: 300, sources: ['close', 'hlc3', 'volume'], periods: [14, 50, 200] },
+    // other scales of prices and a long series, so that nothing is tuned to prices around 100 or 73000
+    { id: 'tiny', candles: 300, sources: ['close'], periods: [14, 50] },
+    { id: 'huge', candles: 300, sources: ['close'], periods: [14, 50] },
+    { id: 'negative', candles: 300, sources: ['close'], periods: [14, 50] },
+    { id: 'long2000', candles: 2000, sources: ['close'], periods: [14, 200] },
   ],
   variants: [
     { indicator: 'sma' },

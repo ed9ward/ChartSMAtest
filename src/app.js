@@ -1,5 +1,5 @@
 import { SOURCES } from './sma.js';
-import { INDICATORS, computeIndicator, validateParams } from './indicators.js';
+import { INDICATORS, computeIndicator, validateParams, settleBars } from './indicators.js';
 import { sanitizeCandles, validateCandle } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
@@ -16,7 +16,7 @@ const BUG = new URLSearchParams(location.search).get('bug');
 const $ = (id) => document.getElementById(id);
 const el = Object.fromEntries(
   ['indicator', 'source', 'period', 'mult', 'mult-label', 'ema-start', 'start-label', 'scenario', 'symbol', 'interval', 'start', 'stop', 'disconnect', 'reconnect',
-    'status', 'bar-count', 'last-close', 'last-update', 'legend-day', 'day-change', 'legend-label', 'last-sma', 'legend-bands', 'last-bb-upper', 'last-bb-lower']
+    'status', 'settle-note', 'bar-count', 'last-close', 'last-update', 'legend-day', 'day-change', 'legend-label', 'last-sma', 'legend-bands', 'last-bb-upper', 'last-bb-lower']
     .map((id) => [id, $(id)]),
 );
 
@@ -80,7 +80,22 @@ function renderUpdated() {
 const touch = () => { state.updatedAt = Date.now(); renderUpdated(); };
 setInterval(renderUpdated, 1000);
 
+// EMA and RSI forget the value they started from slowly: with a short history the last values depend on where it begins.
+function updateSettleNote() {
+  const { label } = INDICATORS[state.indicator];
+  const period = params().period;
+  const needed = settleBars(state.indicator, period, { start: state.start });
+  const have = state.candles.length;
+  const unsettled = needed > 0 && have > 0 && have < needed;
+  el['settle-note'].hidden = !unsettled;
+  el['settle-note'].textContent = unsettled
+    ? `${label}(${period}) has not settled: ${have} bars loaded, about ${needed} needed for it to forget its starting value. `
+      + 'The last values depend on where this history begins, so another platform with a longer history can show slightly different numbers.'
+    : '';
+}
+
 function updateLegend() {
+  updateSettleNote();
   const last = lastCandle();
   el['bar-count'].textContent = String(state.candles.length);
   el['last-close'].textContent = last ? fmt(last.close) : '—';

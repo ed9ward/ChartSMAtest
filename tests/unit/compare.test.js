@@ -30,11 +30,30 @@ describe('compareLine statistics', () => {
     expect(compareLine(pts(100.0051), [100], times).cents).toBe(0);
     expect(compareLine(pts(100.0049), [100], times).cents).toBe(1);
   });
-  it('relative tolerance for big numbers, absolute for small ones', () => {
-    expect(compareLine(pts(1e9 + 5), [1e9], times).identical).toBe(1); // 5 on 1e9 is 5e-9 relative
-    expect(compareLine(pts(1e9 + 50), [1e9], times).identical).toBe(0);
-    expect(compareLine(pts(1e-9), [0], times).identical).toBe(1);      // absolute below 1
-    expect(IDENTICAL).toBe(1e-8);
+  describe('the tolerance follows the size of the numbers', () => {
+    it('relative for big numbers', () => {
+      expect(compareLine(pts(1e9 + 5), [1e9], times).identical).toBe(1); // 5 on 1e9 is 5e-9 relative
+      expect(compareLine(pts(1e9 + 50), [1e9], times).identical).toBe(0);
+      expect(IDENTICAL).toBe(1e-8);
+    });
+    it('just as strict for tiny numbers: prices around 0.00001 are not judged against 1', () => {
+      expect(compareLine(pts(1.2e-5 * (1 + 5e-9)), [1.2e-5], times).identical).toBe(1);
+      expect(compareLine(pts(1.2e-5 * (1 + 5e-7)), [1.2e-5], times).identical).toBe(0); // 5e-7 relative: far too much, but 6e-12 absolute
+      expect(compareLine(pts(1.2e-5 + 1e-8), [1.2e-5], times).identical).toBe(0);       // an absolute 1e-8 would have passed against 1
+    });
+    it('a value that should be zero may differ by noise relative to the scale of the whole line', () => {
+      expect(compareLine(pts(1e5, 1e-12), [1e5, 0], times).identical).toBe(2);
+      expect(compareLine(pts(1e5, 1e-3), [1e5, 0], times).identical).toBe(1);   // 1e-3 on a line of scale 1e5 is not noise
+      expect(compareLine(pts(1, 1e-12), [1, 0], times).identical).toBe(2);
+      expect(compareLine(pts(1, 1e-6), [1, 0], times).identical).toBe(1);
+    });
+    it('a line of zeros is compared exactly', () => {
+      expect(compareLine(pts(0, 0), [0, 0], times).identical).toBe(2);
+      expect(compareLine(pts(0, 1e-300), [0, 0], times).identical).toBe(1);
+    });
+    it('the scale is that of the reference line only: other lines do not loosen it', () => {
+      expect(compareLine(pts(1e-5 + 1e-8), [1e-5], times).identical).toBe(0);
+    });
   });
   it('values the app does not have are counted as missing, extra ones as extra', () => {
     const s = compareLine(pts(1, undefined, 3, 4), [1, 2, 3, 4, null], times.slice(0, 5));
@@ -154,8 +173,10 @@ describe('the reference file is complete', () => {
 
   it('has exactly the expected number of series, worked out from the grid (sources x periods x variants)', () => {
     expect(REFERENCE_SPEC.variants).toHaveLength(5);
-    expect(ref.datasets.map((d) => d.series.length)).toEqual([8 * 3 * 5, 3 * 3 * 5]);
-    expect(ref.datasets.map((d) => d.series.length)).toEqual([120, 45]);
+    expect(ref.datasets.map((d) => d.series.length)).toEqual([8 * 3 * 5, 3 * 3 * 5, 1 * 2 * 5, 1 * 2 * 5, 1 * 2 * 5, 1 * 2 * 5]);
+    expect(ref.datasets.map((d) => d.series.length)).toEqual([120, 45, 10, 10, 10, 10]);
+    expect(ref.datasets.map((d) => d.id)).toEqual(['real50', 'walk300', 'tiny', 'huge', 'negative', 'long2000']);
+    expect(ref.datasets.map((d) => d.candles.length)).toEqual([50, 300, 300, 300, 300, 2000]);
     for (const [i, d] of ref.datasets.entries()) {
       const spec = REFERENCE_SPEC.datasets[i];
       expect(d.series.length).toBe(spec.sources.length * spec.periods.length * REFERENCE_SPEC.variants.length);
@@ -166,6 +187,22 @@ describe('the reference file is complete', () => {
     for (const [indicator, seed] of [['sma'], ['ema', 'first'], ['ema', 'sma'], ['bb'], ['rsi']]) {
       expect(real(ref).series.filter((x) => x.indicator === indicator && x.seed === seed)).toHaveLength(24);
       expect(ref.datasets[1].series.filter((x) => x.indicator === indicator && x.seed === seed)).toHaveLength(9);
+    }
+  });
+
+  it('has the other scales and the long series: prices around 1e-5, 5e7, crossing zero, and 2000 bars', () => {
+    const range = (id) => { const c = ref.datasets.find((d) => d.id === id).candles.map((x) => x.close); return [Math.min(...c), Math.max(...c)]; };
+    expect(range('tiny')[0]).toBeGreaterThan(0);
+    expect(range('tiny')[1]).toBeLessThan(1e-4);
+    expect(range('huge')[0]).toBeGreaterThan(1e7);
+    expect(range('huge')[1]).toBeLessThan(1e8);
+    expect(range('negative')[0]).toBeLessThan(0);
+    expect(range('negative')[1]).toBeGreaterThan(0);
+    expect(ref.datasets.find((d) => d.id === 'long2000').candles).toHaveLength(2000);
+    for (const id of ['tiny', 'huge', 'negative', 'long2000']) {
+      const d = ref.datasets.find((x) => x.id === id);
+      expect(d.series.filter((x) => x.indicator === 'sma')).toHaveLength(2);
+      expect(d.series.every((x) => x.source === 'close')).toBe(true);
     }
   });
 
@@ -282,7 +319,9 @@ describe('the reference file is complete', () => {
         expect([s.missing, s.extra, s.outside, s.duplicates, s.unordered]).toEqual([0, 0, 0, 0, 0]);
         expect(s.identical).toBe(s.compared);
         expect(s.cents).toBe(s.compared);
-        expect(s.maxDiff).toBeLessThan(1e-8);
+        // identical to 1e-8 of the size of the numbers (a double has 16 digits): the same strictness at every scale of prices
+        const scale = Math.max(...dataset.candles.map((c) => Math.abs(c.close)));
+        expect(s.maxDiff).toBeLessThan(1e-8 * scale);
       });
     }
   }

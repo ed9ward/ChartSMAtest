@@ -3,6 +3,7 @@ import { computeIndicator, INDICATORS } from '../src/indicators.js';
 import { REFERENCE_SPEC, expectedKeys, seriesKey } from './reference-spec.js';
 
 export const IDENTICAL = 1e-8; // relative; floating point noise only
+const NEAR_ZERO = 1e-3;        // values smaller than this fraction of the line's own scale are judged against that scale
 
 // "To the cent": closer than half a cent. (Rounding both numbers first would fail on exact halves by 1e-11.)
 const withinCent = (a, b) => Math.abs(a - b) < 0.005;
@@ -20,6 +21,9 @@ const COUNTERS = ['compared', 'identical', 'cents', 'missing', 'extra', 'outside
 export function compareLine(ours, theirs, times) {
   const stats = { compared: 0, identical: 0, cents: 0, missing: 0, extra: 0, outside: 0, duplicates: 0, unordered: 0, expected: 0, maxDiff: 0, sumDiff: 0, worst: null };
   const inRange = new Set(times);
+  // The tolerance follows the size of the numbers, so it is as strict for prices around 0.00001 as for prices around 73000;
+  // a value that should be 0 may differ from it by noise relative to the scale of the whole line.
+  const scale = Math.max(0, ...theirs.filter(Number.isFinite).map(Math.abs));
   const byTime = new Map();
   let newest = -Infinity;
   for (const p of ours) {
@@ -41,7 +45,7 @@ export function compareLine(ours, theirs, times) {
     const diff = Math.abs(got - want);
     stats.compared++;
     stats.sumDiff += diff;
-    if (diff <= IDENTICAL * Math.max(1, Math.abs(want))) stats.identical++;
+    if (diff <= IDENTICAL * Math.max(Math.abs(want), NEAR_ZERO * scale)) stats.identical++;
     if (withinCent(got, want)) stats.cents++;
     if (diff > stats.maxDiff) { stats.maxDiff = diff; stats.worst = { time, ours: got, theirs: want }; }
   });

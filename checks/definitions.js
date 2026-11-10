@@ -10,7 +10,7 @@ import { refSMA, refEMA, refBB, refRSI, compareSeries } from './reference.js';
 import { expectedBars } from './data.js';
 import { assert, equal, close, throws } from './assert.js';
 import { compareIndicator, comparisonProblem } from './compare.js';
-import { verifyReference } from './reference-spec.js';
+import { verifyReference, REFERENCE_SPEC } from './reference-spec.js';
 import { parseCandleRow, parseMatch, parseHeartbeat, openStream as openCoinbaseStream, COINBASE_GRANULARITY } from '../src/coinbase.js';
 
 const DATA = generateCandles({ seed: 42, count: 300 });
@@ -431,7 +431,7 @@ function talibGroup(ctx) {
       if (problems.length) throw new Error(`${problems.length} problem(s), e.g. ${problems[0]}`);
     },
   }];
-  for (const datasetId of ['real50', 'walk300']) {
+  for (const { id: datasetId } of REFERENCE_SPEC.datasets) {
     for (const { key, indicator, start, title } of COMPARISONS) {
       checks.push({
         name: `${title} on ${datasetId} equals the reference library`,
@@ -441,7 +441,7 @@ function talibGroup(ctx) {
           const stats = compareIndicator(dataset, indicator, start);
           const detail = { stats: { ...stats, dataset: dataset.title, datasetId, indicator: title, key } };
           const problem = comparisonProblem(stats);
-          if (problem) throw Object.assign(new Error(problem), { detail }); // the table still shows the numbers
+          if (problem !== null) throw Object.assign(new Error(problem), { detail }); // the table still shows the numbers
           return detail;
         },
       });

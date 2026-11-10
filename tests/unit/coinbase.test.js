@@ -54,6 +54,38 @@ describe('fetchHistory', () => {
     expect(await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ok([ROWS[0], null, 'x', [1]]) })).toHaveLength(1);
     expect(await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ok([]) })).toEqual([]);
   });
+  describe('the limit contract', () => {
+    const rows = Array.from({ length: 5 }, (_, i) => [60 * (5 - i), 1, 2, 1, 2, 1]); // newest first: times 300, 240, ..., 60
+    const run = (limit, fetchFn = async () => ok(rows)) => fetchHistory({ symbol: 'X', interval: '1m', limit, fetchFn });
+    it('zero gives an empty list and makes no request', async () => {
+      let called = false;
+      expect(await run(0, async () => { called = true; return ok(rows); })).toEqual([]);
+      expect(called).toBe(false);
+    });
+    it.each([1, 2, 3, 5])('%i gives exactly the newest %i candles', async (limit) => {
+      const got = await run(limit);
+      expect(got).toHaveLength(limit);
+      expect(got.map((c) => c.time)).toEqual([60, 120, 180, 240, 300].slice(5 - limit));
+    });
+    it('more than there are is everything; more than Coinbase allows is cut to 300', async () => {
+      expect(await run(100)).toHaveLength(5);
+      const many = Array.from({ length: 400 }, (_, i) => [60 * (400 - i), 1, 2, 1, 2, 1]);
+      expect(await run(10000, async () => ok(many))).toHaveLength(300);
+      expect(await run(301, async () => ok(many))).toHaveLength(300);
+      expect(await run(300, async () => ok(many))).toHaveLength(300);
+    });
+    it.each([[-1], [-10], [NaN], [1.5], [0.5], [Infinity], [-Infinity], ['5'], [null], [{}], [[]], [true]])('rejects %j before any request', async (limit) => {
+      let called = false;
+      await expect(run(limit, async () => { called = true; return ok(rows); })).rejects.toThrow(RangeError);
+      expect(called).toBe(false);
+    });
+    it('no limit means the default (300)', async () => {
+      expect(await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ok(rows) })).toHaveLength(5);
+    });
+    it('an empty answer with a positive limit is an empty list, not an error', async () => {
+      expect(await run(3, async () => ok([]))).toEqual([]);
+    });
+  });
   it('unsupported timeframe is rejected before any request', async () => {
     let called = false;
     await expect(fetchHistory({ symbol: 'X', interval: '4h', fetchFn: async () => { called = true; } })).rejects.toThrow('no 4h timeframe');

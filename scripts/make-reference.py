@@ -33,7 +33,8 @@ def source_values(c, source):
 
 
 def cleaned(values):
-    return [None if not np.isfinite(v) else round(float(v), 10) for v in values]
+    # 15 significant digits: the full precision of a double, at any scale of prices (1e-5 as well as 1e8)
+    return [None if not np.isfinite(v) else float(f"{float(v):.15g}") for v in values]
 
 
 def series_for(c, indicator, source, period, mult=2):
@@ -70,6 +71,11 @@ SOURCES_ALL = SOURCES
 DATASET_SPECS = [
     {"id": "real50", "candles": 50, "sources": SOURCES_ALL, "periods": [5, 14, 20]},
     {"id": "walk300", "candles": 300, "sources": ["close", "hlc3", "volume"], "periods": [14, 50, 200]},
+    # other scales of prices and a long series, so that nothing is tuned to prices around 100 or 73000
+    {"id": "tiny", "candles": 300, "sources": ["close"], "periods": [14, 50]},       # prices around 0.00001 (a coin worth a hundred-thousandth of a dollar)
+    {"id": "huge", "candles": 300, "sources": ["close"], "periods": [14, 50]},       # prices around 50 million
+    {"id": "negative", "candles": 300, "sources": ["close"], "periods": [14, 50]},   # prices that cross zero (spreads, some futures)
+    {"id": "long2000", "candles": 2000, "sources": ["close"], "periods": [14, 200]}, # a long series
 ]
 VARIANTS = [
     {"indicator": "sma"},
@@ -105,17 +111,17 @@ def real_rows():
     ]
 
 
-def random_walk_rows(count=300, seed=7):
+def random_walk_rows(count=300, seed=7, start=100.0, sd=1.5, decimals=2):
     rng = np.random.RandomState(seed)
-    close = 100 + np.cumsum(rng.normal(0, 1.5, count))
-    rows, prev = [], 100.0
+    close = start + np.cumsum(rng.normal(0, sd, count))
+    rows, prev = [], start
     for i in range(count):
         o, c = prev, float(close[i])
         rows.append({
             "time": 1_700_000_000 + 60 * i,
-            "open": round(o, 2), "close": round(c, 2),
-            "high": round(max(o, c) + float(rng.uniform(0, 1.5)), 2),
-            "low": round(min(o, c) - float(rng.uniform(0, 1.5)), 2),
+            "open": round(o, decimals), "close": round(c, decimals),
+            "high": round(max(o, c) + float(rng.uniform(0, sd)), decimals),
+            "low": round(min(o, c) - float(rng.uniform(0, sd)), decimals),
             "volume": round(float(rng.uniform(1000, 10000)), 2),
         })
         prev = c
@@ -125,6 +131,10 @@ def random_walk_rows(count=300, seed=7):
 datasets = [
     build(DATASET_SPECS[0], "50 real BTCUSDT 1m bars from Binance", real_rows()),
     build(DATASET_SPECS[1], "300 random-walk bars (generated independently of the app)", random_walk_rows()),
+    build(DATASET_SPECS[2], "300 random-walk bars, prices around 0.00001", random_walk_rows(300, 11, 1.2e-5, 1e-7, 10)),
+    build(DATASET_SPECS[3], "300 random-walk bars, prices around 50 million", random_walk_rows(300, 12, 5e7, 2.5e5, 0)),
+    build(DATASET_SPECS[4], "300 random-walk bars, prices crossing zero", random_walk_rows(300, 13, 3.0, 1.0, 3)),
+    build(DATASET_SPECS[5], "2000 random-walk bars", random_walk_rows(2000, 14)),
 ]
 
 # --- RSI edge cases: what each convention says when there is no movement at all -----------------------------------

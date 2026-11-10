@@ -5,6 +5,8 @@
 // so its sizes would be incomplete). Coinbase says matches can be dropped and recommends tracking the trade id with the
 // heartbeat channel and fetching the missed trades from REST. That is what openStream() does.
 
+import { assertLimit } from './limit.js';
+
 export const COINBASE_GRANULARITY = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 export const COINBASE_REST = 'https://api.exchange.coinbase.com';
 export const COINBASE_WS = 'wss://ws-feed.exchange.coinbase.com';
@@ -17,7 +19,13 @@ export function parseCandleRow(row) {
   return { time, open, high, low, close, volume };
 }
 
+/**
+ * The newest `limit` candles, oldest first. `limit` must be a non-negative integer: 0 gives an empty list without any
+ * request, and anything above Coinbase's 300 per request is cut to 300.
+ */
 export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, signal, fetchFn = fetch }) {
+  assertLimit(limit);
+  if (limit === 0) return [];
   const granularity = COINBASE_GRANULARITY[interval];
   if (!granularity) throw new Error(`Coinbase has no ${interval} timeframe`);
   const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/candles?granularity=${granularity}`;
@@ -26,7 +34,7 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
   const body = await res.json();
   if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
   const candles = body.map(parseCandleRow).filter(Boolean).sort((a, b) => a.time - b.time);
-  return candles.slice(-Math.min(limit, MAX_CANDLES));
+  return candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
 }
 
 // --- trades ----------------------------------------------------------------

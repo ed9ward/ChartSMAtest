@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { buildGroups } from '../../checks/definitions.js';
-import { runChecks } from '../../checks/runner.js';
+import { runChecks, describeError } from '../../checks/runner.js';
+import { assert } from '../../checks/assert.js';
+import { createUiDriver } from '../../checks/ui.js';
 import { parseKline } from '../../src/live.js';
 
 const rows = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url)));
@@ -93,6 +95,103 @@ describe('the in-page check suite (everything that does not need a browser)', ()
     expect(s).toMatchObject({ total: 3, passed: 1, failed: 2 });
     expect(s.results.map((r) => r.error)).toEqual(['boom', 'later', null]);
     expect(s.groups[0]).toMatchObject({ failed: 2, passed: 1 });
+  });
+
+  describe('a check that throws is a failure, whatever the thrown value looks like', () => {
+    class Quiet extends Error {}
+    const thrown = {
+      "new Error('')": () => { throw new Error(''); },
+      "throw ''": () => { throw ''; },
+      "new Error('   ') (only spaces)": () => { throw new Error('   '); },
+      "throw '   '": () => { throw '   '; },
+      'an Error subclass with no message': () => { throw new Quiet(); },
+      "a TypeError with an empty message": () => { throw new TypeError(''); },
+      'throw undefined': () => { throw undefined; },
+      'throw null': () => { throw null; },
+      'throw 0': () => { throw 0; },
+      'throw false': () => { throw false; },
+      'throw NaN': () => { throw NaN; },
+      'throw {} (no text)': () => { throw {}; },
+      'throw []': () => { throw []; },
+      'throw an object whose text is empty': () => { throw { toString: () => '' }; },
+      'throw an object whose toString throws': () => { throw { toString() { throw new Error('no'); } }; },
+      'a symbol': () => { throw Symbol('s'); },
+      "an async function throwing new Error('')": async () => { throw new Error(''); },
+      "an async function throwing ''": async () => { throw ''; },
+      'a promise rejected with undefined': () => Promise.reject(undefined),
+      "a promise rejected with ''": () => Promise.reject(''),
+      "an assertion with an empty message": () => assert(false, ''),
+      'an assertion without a message': () => assert(false),
+    };
+    for (const [name, run] of Object.entries(thrown)) {
+      it(`${name}`, async () => {
+        const s = await runChecks([{ id: 'x', title: 'X', checks: [{ name: 'c', run }, { name: 'fine', run: () => {} }] }]);
+        expect(s).toMatchObject({ total: 2, passed: 1, failed: 1 });
+        expect(s.groups[0]).toMatchObject({ passed: 1, failed: 1 });
+        expect(s.results[0].ok).toBe(false);
+        expect(typeof s.results[0].error).toBe('string');
+        expect(s.results[0].error.trim().length).toBeGreaterThan(0); // and the page always has something to show
+        expect(s.results[1].ok).toBe(true);
+      });
+    }
+
+    it('a check that returns normally is a pass, even if it returns a falsy value, an empty string or an error-looking value', async () => {
+      const returns = [undefined, null, 0, '', false, NaN, new Error('not thrown'), { error: 'x' }];
+      const s = await runChecks([{ id: 'x', title: 'X', checks: returns.map((v, i) => ({ name: `returns ${i}`, run: () => v })) }]);
+      expect(s).toMatchObject({ total: 8, passed: 8, failed: 0 });
+      expect(s.results.every((r) => r.ok && r.error === null)).toBe(true);
+    });
+
+    it('the totals add up when many things are thrown', async () => {
+      const checks = Object.entries(thrown).map(([name, run]) => ({ name, run }));
+      const s = await runChecks([{ id: 'x', title: 'X', checks }]);
+      expect(s.failed).toBe(checks.length);
+      expect(s.passed).toBe(0);
+      expect(s.results.every((r) => !r.ok)).toBe(true);
+    });
+
+    it('the order of results is kept after failures', async () => {
+      const s = await runChecks([{ id: 'x', title: 'X', checks: [
+        { name: 'a', run: () => { throw ''; } }, { name: 'b', run: () => {} }, { name: 'c', run: () => { throw new Error(''); } }, { name: 'd', run: () => {} },
+      ] }]);
+      expect(s.results.map((r) => [r.name, r.ok])).toEqual([['a', false], ['b', true], ['c', false], ['d', true]]);
+    });
+
+    it('describeError: a real message is kept as it is; the rest becomes readable text', () => {
+      expect(describeError(new Error('boom'))).toBe('boom');
+      expect(describeError('plain text')).toBe('plain text');
+      expect(describeError(new Error(''))).toMatch(/^Error \(thrown with an empty message\)$/);
+      expect(describeError(new TypeError(''))).toMatch(/^TypeError/);
+      expect(describeError('')).toMatch(/no text was thrown/);
+      expect(describeError(undefined)).toBe('undefined');
+      expect(describeError(null)).toBe('null');
+      expect(describeError(0)).toBe('0');
+      expect(describeError({})).toBe('[object Object]');
+    });
+  });
+
+  describe('the helpers of the in-page checks never accept an empty message as "fine"', () => {
+    it('assert with no or an empty message still throws a message with text', () => {
+      for (const args of [[false], [false, ''], [0, ''], [null], [undefined, '']]) {
+        try { assert(...args); } catch (e) { expect(e.message.length).toBeGreaterThan(0); continue; }
+        throw new Error('assert did not throw');
+      }
+      expect(() => assert(true, '')).not.toThrow();
+    });
+
+    it('until() accepts only null as success: an empty text is a problem, and a fixed problem passes', async () => {
+      const frame = { contentWindow: { requestAnimationFrame: (cb) => setTimeout(cb, 0), document: {} } };
+      const driver = createUiDriver(frame);
+      await expect(driver.until(() => '', 30)).rejects.toThrow(/did not pass/);
+      await expect(driver.until(() => 'still wrong', 30)).rejects.toThrow('still wrong');
+      await expect(driver.until(() => null, 30)).resolves.toBeUndefined();
+      let n = 0;
+      await expect(driver.until(() => (++n < 3 ? 'not yet' : null), 500)).resolves.toBeUndefined();
+      expect(n).toBe(3);
+      let m = 0;
+      await expect(driver.until(() => (++m < 3 ? '' : null), 500)).resolves.toBeUndefined(); // an empty problem is still a problem: it is tried again
+      expect(m).toBe(3);
+    });
   });
 
   it('the runner skips groups with no selected checks', async () => {

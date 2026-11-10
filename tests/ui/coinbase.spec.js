@@ -152,6 +152,31 @@ test.describe('Coinbase history', () => {
   });
 });
 
+test.describe('Coinbase history is limited to 300 candles', () => {
+  const rows300 = Array.from({ length: 300 }, (_, i) => [T0 - 60 * i, 73400, 73500, 73450, 73450 + Math.sin(i / 7) * 40, 5]); // newest first
+
+  test('a long EMA on 300 candles is flagged as not settled; a short one and the SMA are not', async ({ page }) => {
+    const mock = await mockCoinbase(page, () => ({ body: rows300 }));
+    await goLive(page, mock);
+    await expect(page.getByTestId('bar-count')).toHaveText('300');
+    await page.getByTestId('indicator').selectOption('ema');
+    await page.getByTestId('period').fill('200');
+    await expect(page.getByTestId('settle-note')).toContainText('EMA(200) has not settled: 300 bars loaded, about 692 needed');
+    await page.getByTestId('period').fill('20');
+    await expect(page.getByTestId('settle-note')).toBeHidden();
+    await page.getByTestId('indicator').selectOption('sma');
+    await page.getByTestId('period').fill('200');
+    await expect(page.getByTestId('settle-note')).toBeHidden();
+  });
+
+  test('asking for more than 300 is cut to 300, not an error', async ({ page }) => {
+    const mock = await mockCoinbase(page, () => ({ body: [...rows300, ...rows300.map((r) => [r[0] - 60 * 300, ...r.slice(1)])] })); // 600 rows
+    await goLive(page, mock);
+    await expect(page.getByTestId('bar-count')).toHaveText('300');
+    await expect(status(page)).toHaveText('Live BTC-USD 1m');
+  });
+});
+
 test.describe('Coinbase impossible candles', () => {
   test('history rows with low above high or a negative volume are dropped', async ({ page }) => {
     const rows = CB_ROWS.map((r) => [...r]);

@@ -1,5 +1,6 @@
 import { test, expect, open, candleData, probeLine, expectLineAt } from './fixtures.js';
 import { SOURCES } from '../../src/sma.js';
+import { settleBars } from '../../src/indicators.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
 import { mulberry32 } from '../../src/generator.js';
@@ -355,6 +356,85 @@ test.describe('switching indicators', () => {
     await page.getByTestId('scenario').selectOption('long');
     await expectLines(page, 'ema', SCENARIOS.long(), { period: 20 }, 'close');
     expect((await snapshot(page)).indicator).toBe('ema');
+  });
+});
+
+test.describe('the note about indicators that have not settled', () => {
+  const note = (page) => page.getByTestId('settle-note');
+
+  test('EMA 20 on 60 bars: not settled, with the numbers', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await expect(note(page)).toBeVisible();
+    await expect(note(page)).toContainText('EMA(20) has not settled: 60 bars loaded, about 71 needed');
+    await expect(note(page)).toContainText('another platform with a longer history can show slightly different numbers');
+  });
+
+  test('RSI 14 on 60 bars: not settled; SMA and Bollinger Bands never show the note', async ({ page }) => {
+    await open(page);
+    await pick(page, 'rsi');
+    await expect(note(page)).toContainText('RSI(14) has not settled: 60 bars loaded, about 109 needed');
+    for (const kind of ['sma', 'bb']) {
+      await pick(page, kind, { period: 200 });
+      await expect(note(page)).toBeHidden();
+    }
+  });
+
+  test('changing the period updates it: a short EMA is settled, a long one is not', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await page.getByTestId('period').fill('5');
+    await expect(note(page)).toBeHidden();      // needs 18 bars, there are 60
+    await page.getByTestId('period').fill('40');
+    await expect(note(page)).toContainText(`EMA(40) has not settled: 60 bars loaded, about ${settleBars('ema', 40)} needed`);
+    await page.getByTestId('period').fill('0');  // an invalid period keeps the old one, and the note with it
+    await expect(note(page)).toContainText('EMA(40)');
+  });
+
+  test('the SMA start needs more bars than the first-value start', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema', { period: 20 });
+    await expect(note(page)).toContainText('about 71 needed');
+    await page.getByTestId('ema-start').selectOption('sma');
+    await expect(note(page)).toContainText('about 90 needed');
+  });
+
+  test('with enough history the note disappears, and with 2000 bars a very long period brings it back', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema', { scenario: 'long', period: 200 });
+    await expect(page.getByTestId('bar-count')).toHaveText('2000');
+    await expect(note(page)).toBeHidden();        // 692 needed
+    await page.getByTestId('period').fill('1000');
+    await expect(note(page)).toContainText(`EMA(1000) has not settled: 2000 bars loaded, about ${settleBars('ema', 1000)} needed`);
+  });
+
+  test('it disappears while the stream adds bars, exactly when the history is long enough', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await page.evaluate(() => { for (let i = 0; i < 50; i++) window.__app.step(); }); // 60 + 10 = 70 bars
+    await expect(page.getByTestId('bar-count')).toHaveText('70');
+    await expect(note(page)).toContainText('70 bars loaded, about 71 needed');
+    await page.evaluate(() => window.__app.step());                                    // the 51st tick opens bar 71
+    await expect(page.getByTestId('bar-count')).toHaveText('71');
+    await expect(note(page)).toBeHidden();
+  });
+
+  test('no data, no note', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema', { scenario: 'empty' });
+    await expect(note(page)).toBeHidden();
+  });
+
+  test('switching indicators and data sets keeps the note in step', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await expect(note(page)).toBeVisible();
+    await pick(page, 'sma');
+    await expect(note(page)).toBeHidden();
+    await pick(page, 'rsi');
+    await expect(note(page)).toContainText('RSI(14)');
+    await page.getByTestId('scenario').selectOption('long');
+    await expect(note(page)).toBeHidden();
   });
 });
 

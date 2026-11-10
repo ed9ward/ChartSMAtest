@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { computeEMA, computeBB, computeRSI, computeIndicator, INDICATORS, validateParams } from '../../src/indicators.js';
+import { computeEMA, computeBB, computeRSI, computeIndicator, INDICATORS, validateParams, settleBars } from '../../src/indicators.js';
 import { generateCandles } from '../../src/generator.js';
 import { parseKline } from '../../src/live.js';
 import { refEMA, refBB, refRSI, expectSeriesClose } from './helpers.js';
@@ -321,6 +321,56 @@ describe('golden values on real BTCUSDT data', () => {
     expect(last(computeRSI(real, 14), 1)).toBeCloseTo(57.717625, 5);
     expect(computeRSI(real, 14)[0].value).toBeCloseTo(5.056512, 5);
     expect(last(computeRSI(real, 5))).toBeCloseTo(77.714201, 5);
+  });
+});
+
+describe('settleBars: how much history a recursive indicator needs to forget where it started', () => {
+  // worked out independently in Python: warm-up + ceil(ln(0.001) / ln(1 - alpha)) + 1, alpha = 2 / (period + 1) for the EMA, 1 / period for the RSI
+  it.each([
+    ['ema', 20, undefined, 71], ['ema', 200, undefined, 692], ['ema', 5, undefined, 19], ['ema', 1, undefined, 1], ['ema', 2, undefined, 8],
+    ['rsi', 14, undefined, 109], ['rsi', 1, undefined, 2], ['rsi', 2, undefined, 13],
+    ['ema', 20, { start: 'sma' }, 90], ['ema', 200, { start: 'sma' }, 891],
+  ])('%s(%i) %j needs %i bars', (kind, period, options, bars) => {
+    expect(settleBars(kind, period, options)).toBe(bars);
+  });
+  it('SMA and Bollinger Bands do not depend on where the history starts', () => {
+    for (const period of [1, 20, 200]) {
+      expect(settleBars('sma', period)).toBe(0);
+      expect(settleBars('bb', period)).toBe(0);
+    }
+  });
+  it('after exactly that many bars the start has faded to the tolerance, one bar earlier it had not', () => {
+    for (const [kind, period] of [['ema', 9], ['ema', 20], ['ema', 50], ['ema', 200], ['rsi', 7], ['rsi', 14], ['rsi', 50]]) {
+      const alpha = kind === 'ema' ? 2 / (period + 1) : 1 / period;
+      const n = settleBars(kind, period) - (kind === 'rsi' ? period : 0) - 1; // bars of fading after the first value
+      expect((1 - alpha) ** n).toBeLessThanOrEqual(1e-3);
+      expect((1 - alpha) ** (n - 1)).toBeGreaterThan(1e-3);
+    }
+  });
+  it('a tighter tolerance needs more bars, a looser one fewer', () => {
+    expect(settleBars('ema', 20, { tolerance: 1e-6 })).toBeGreaterThan(settleBars('ema', 20));
+    expect(settleBars('ema', 20, { tolerance: 1e-1 })).toBeLessThan(settleBars('ema', 20));
+  });
+  it('grows with the period', () => {
+    for (const kind of ['ema', 'rsi']) {
+      let previous = 0;
+      for (let period = 1; period <= 300; period++) {
+        const bars = settleBars(kind, period);
+        expect(bars).toBeGreaterThanOrEqual(previous);
+        previous = bars;
+      }
+    }
+  });
+  it('the EMA values really do keep the start: with the settle count the two EMA starts agree to the tolerance', () => {
+    const data = generateCandles({ seed: 9, count: 400 });
+    const first = computeEMA(data, 20, 'close', 'first');
+    const sma = computeEMA(data, 20, 'close', 'sma');
+    const gap0 = Math.abs(first[19].value - sma[0].value);
+    const atSettle = Math.abs(first[settleBars('ema', 20, { start: 'sma' }) - 1].value - sma[settleBars('ema', 20, { start: 'sma' }) - 20].value);
+    expect(atSettle).toBeLessThanOrEqual(gap0 * 1e-3 * 1.0001);
+  });
+  it.each([0, -1, 1.5, NaN])('rejects the period %s', (period) => {
+    expect(() => settleBars('ema', period)).toThrow(RangeError);
   });
 });
 

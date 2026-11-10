@@ -35,14 +35,15 @@ export function createUiDriver(frame) {
       });
     },
     // Repeats `attempt` (returns null when fine, or a problem text) until it is fine or the time is up, like a poll.
+    // Only null means fine: an empty text is still a problem.
     async until(attempt, timeoutMs = 1500) {
       const deadline = performance.now() + timeoutMs;
       let problem = attempt();
-      while (problem && performance.now() < deadline) {
+      while (problem !== null && performance.now() < deadline) {
         await driver.settle();
         problem = attempt();
       }
-      assert(!problem, problem);
+      assert(problem === null, problem === null ? '' : String(problem) || 'the check did not pass');
     },
     // Fresh state: demo data set (resets the feed), then indicator (sets its default period), then source.
     setup({ indicator = 'sma', source = 'close', scenario = 'normal' } = {}) {

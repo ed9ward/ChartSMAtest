@@ -68,6 +68,34 @@ describe('fetchHistory', () => {
     const candles = await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => okResponse([RAW[0], null, 'x', RAW[1]]) });
     expect(candles).toHaveLength(2);
   });
+  describe('the limit contract', () => {
+    const run = (limit, fetchFn = async () => okResponse(RAW)) => fetchHistory({ symbol: 'BTCUSDT', interval: '1m', limit, fetchFn });
+    it('zero gives an empty list and makes no request', async () => {
+      let called = false;
+      expect(await run(0, async () => { called = true; return okResponse(RAW); })).toEqual([]);
+      expect(called).toBe(false);
+    });
+    it('is passed on as asked, up to Binance\'s 1000', async () => {
+      const urls = [];
+      for (const limit of [1, 500, 1000]) await run(limit, async (u) => { urls.push(u); return okResponse([]); });
+      expect(urls.map((u) => u.match(/limit=(\d+)/)[1])).toEqual(['1', '500', '1000']);
+    });
+    it('more than 1000 is cut to 1000 in the request', async () => {
+      let url;
+      await run(5000, async (u) => { url = u; return okResponse([]); });
+      expect(url).toMatch(/limit=1000$/);
+    });
+    it.each([[-1], [NaN], [1.5], [Infinity], ['5'], [null], [{}]])('rejects %j before any request', async (limit) => {
+      let called = false;
+      await expect(run(limit, async () => { called = true; return okResponse([]); })).rejects.toThrow(RangeError);
+      expect(called).toBe(false);
+    });
+    it('no limit means 500', async () => {
+      let url;
+      await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async (u) => { url = u; return okResponse([]); } });
+      expect(url).toMatch(/limit=500$/);
+    });
+  });
   it('HTTP error', async () => {
     await expect(fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ({ ok: false, status: 429 }) })).rejects.toThrow('HTTP 429');
   });

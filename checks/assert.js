@@ -1,6 +1,6 @@
 // Tiny assertion helpers shared by the in-page checks (no test framework needed).
-export function assert(condition, message = 'assertion failed') {
-  if (!condition) throw new Error(message);
+export function assert(condition, message) {
+  if (!condition) throw new Error(message || 'assertion failed'); // never an empty message
 }
 
 // JSON with sorted keys, so the order of object keys does not matter.

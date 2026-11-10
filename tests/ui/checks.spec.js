@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from './fixtures.js';
 import { buildGroups } from '../../checks/definitions.js';
+import { REFERENCE_SPEC } from '../../checks/reference-spec.js';
 
 // How many checks the suite has, counted straight from the definitions (not from the page).
 const rows = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url)));
@@ -28,8 +29,8 @@ test.describe('comparison with TA-Lib', () => {
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
     await expect(page.getByTestId('stats')).toBeVisible();
-    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(10);
-    for (const dataset of ['real50', 'walk300']) {
+    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(30); // 6 data sets x 5 comparisons
+    for (const dataset of REFERENCE_SPEC.datasets.map((d) => d.id)) {
       for (const indicator of ['sma', 'ema-first', 'ema-sma', 'bollinger-bands', 'rsi']) {
         const row = page.getByTestId(`stat-${dataset}-${indicator}`);
         await expect(row).toBeVisible();
@@ -40,7 +41,7 @@ test.describe('comparison with TA-Lib', () => {
         await expect(row.locator('.reference')).toHaveText(indicator === 'ema-first' ? 'pandas' : 'TA-Lib');
         await expect(row.locator('.cents')).toHaveText(`${compared} (100%)`);
         await expect(row.locator('.identical')).toHaveClass(/ok/);
-        await expect(row.locator('.max')).toHaveText(/e-1\d$|^0$/); // difference at the 1e-10 rounding of the reference file
+        await expect(row.locator('.max')).toHaveText(/e-\d+$|^0$/); // a difference at the level of floating point noise, at any scale of prices
       }
     }
     await expect(page.getByTestId('group-talib')).toContainText('Comparison with TA-Lib');
@@ -78,7 +79,7 @@ test.describe('comparison with TA-Lib', () => {
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
     await expect(page.getByTestId('verdict')).toHaveText(new RegExp(`^${NEED_REFERENCE_FILE} of \\d+ checks failed`));
-    expect(NEED_REFERENCE_FILE).toBe(13); // 1 completeness + 10 library comparisons + 2 RSI edge-case checks
+    expect(NEED_REFERENCE_FILE).toBe(33); // 1 completeness + 30 library comparisons + 2 RSI edge-case checks
     await expect(page.getByTestId('details-talib').locator('li.fail').first()).toContainText('HTTP 404');
     expect(errors).toEqual(['Failed to load resource: the server responded with a status of 404 (Not Found)']);
     errors.length = 0;
