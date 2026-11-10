@@ -151,6 +151,58 @@ describe('fetchTrades', () => {
     expect(trades.map((t) => t.tradeId)).toEqual([11, 12]);
     expect(trades[0]).toMatchObject({ price: 100, size: 1 });
   });
+  it('paginates a recovery range larger than one page without response headers', async () => {
+    const all = Array.from({ length: 1011 }, (_, i) => ({
+      trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    const urls = [];
+    const trades = await fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 10, throughTradeId: 1011,
+      fetchFn: async (url) => {
+        urls.push(url);
+        const parsed = new URL(url);
+        const before = parsed.searchParams.get('before');
+        const after = parsed.searchParams.get('after');
+        const page = all.filter((t) => before !== null ? t.trade_id > Number(before)
+          : after !== null ? t.trade_id < Number(after) : true)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
+        return ok(page);
+      },
+    });
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain('before=10');
+    expect(urls[1]).toContain('after=12');
+    expect(trades).toHaveLength(1001);
+    expect(trades[0].tradeId).toBe(11);
+    expect(trades.at(-1).tradeId).toBe(1011);
+  });
+  it('stops at the requested upper trade ID even if the page contains newer trades', async () => {
+    const all = Array.from({ length: 20 }, (_, i) => ({
+      trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    const trades = await fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 10, throughTradeId: 12,
+      fetchFn: async () => ok(all.sort((a, b) => b.trade_id - a.trade_id)),
+    });
+    expect(trades.map((trade) => trade.tradeId)).toEqual([11, 12]);
+  });
+  it('fails closed when the configured pagination bound is exhausted', async () => {
+    const all = Array.from({ length: 3000 }, (_, i) => ({
+      trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    await expect(fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 1, throughTradeId: 3000, maxPages: 2,
+      fetchFn: async (url) => {
+        const parsed = new URL(url);
+        const before = parsed.searchParams.get('before');
+        const after = parsed.searchParams.get('after');
+        const page = all.filter((t) => before !== null ? t.trade_id > Number(before)
+          : after !== null ? t.trade_id < Number(after) : true)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
+        return ok(page);
+      },
+    })).rejects.toThrow('trade recovery exceeds 2000 REST records');
+  });
   it('drops broken rows; errors are reported', async () => {
     expect(await fetchTrades({ symbol: 'X', fetchFn: async () => ok([rows[0], null, { trade_id: 'x' }, {}]) })).toHaveLength(1);
     await expect(fetchTrades({ symbol: 'X', fetchFn: async () => ({ ok: false, status: 503 }) })).rejects.toThrow('HTTP 503');
