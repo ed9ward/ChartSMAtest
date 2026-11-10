@@ -231,7 +231,14 @@ function setup({ trades = [], candles = [], ...opts } = {}) {
     out.urls.push(url);
     if (opts.failRest) throw new TypeError('Failed to fetch');
     if (url.includes('/trades')) {
-      return ok([...out.trades].sort((a, b) => b.trade_id - a.trade_id));
+      const parsed = new URL(url);
+      const before = parsed.searchParams.get('before');
+      const after = parsed.searchParams.get('after');
+      const limit = Number(parsed.searchParams.get('limit') || MAX_TRADES);
+      const page = out.trades.filter((trade) => before !== null ? trade.trade_id > Number(before)
+        : after !== null ? trade.trade_id < Number(after) : true)
+        .sort((a, b) => b.trade_id - a.trade_id).slice(0, limit);
+      return ok(page);
     }
     return ok(out.restCandles);
   };
@@ -403,7 +410,7 @@ describe('stream: lost trades are fetched from REST', () => {
     t.send(match(4, 4, 102, 2)); // 3 was lost
     await flush();
     expect(t.candles.at(-1)).toEqual({ time: BASE, open: 100, high: 150, low: 100, close: 102, volume: 8 });
-    expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000']);
+    expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000&before=2']);
     expect(t.events).toContainEqual({ type: 'recovered', count: 1, upTo: 4 });
     expect(t.resyncs).toEqual([]);
   });
@@ -418,6 +425,19 @@ describe('stream: lost trades are fetched from REST', () => {
     expect(first).toEqual({ time: BASE, open: 100, high: 101, low: 95, close: 95, volume: 4 });
     expect(t.candles.at(-1)).toMatchObject({ time: BASE + 60, open: 120 });
     expect(t.candles.map((c) => c.time)).toEqual([BASE, BASE, BASE, BASE + 60]); // 1, 2, recovered 3, then 4: in order
+  });
+  it('recovers a gap spanning more than one REST page', async () => {
+    const trades = Array.from({ length: 1001 }, (_, i) => [i + 2, 2 + i / 1000, 100 + i / 1000, 0.01]);
+    const t = setup({ trades });
+    t.send(lastMatch(1));
+    t.send(match(1003, 4, 105, 1));
+    await flush();
+    expect(t.resyncs).toEqual([]);
+    expect(t.candles.at(-1).volume).toBeCloseTo(11.01, 8);
+    expect(t.events).toContainEqual({ type: 'recovered', count: 1000, upTo: 1003 });
+    expect(restUrls(t)).toHaveLength(2);
+    expect(restUrls(t)[0]).toContain('before=1');
+    expect(restUrls(t)[1]).toContain('after=3');
   });
   it('several lost trades in a row', async () => {
     const t = setup({ trades: [[2, 2, 101, 1], [3, 3, 102, 1], [4, 4, 103, 1]] });
