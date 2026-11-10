@@ -104,14 +104,58 @@ export function parseHeartbeat(data, { symbol } = {}) {
   return Number.isSafeInteger(lastTradeId) && lastTradeId >= 0 ? { lastTradeId } : null;
 }
 
-/** The newest trades (up to 1000), oldest first. This is the supported way to get trades a WebSocket client missed. */
-export async function fetchTrades({ symbol, signal, fetchFn = fetch }) {
-  const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?limit=${MAX_TRADES}`;
-  const res = await fetchFn(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-  if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
-  return body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time)).filter(Boolean).sort((a, b) => a.tradeId - b.tradeId);
+/**
+ * Fetch recent trades, oldest first. When afterTradeId is supplied, walk the
+ * Exchange cursor pages newer than that id until the complete requested range
+ * is covered. Cursor values are trade IDs, so this does not depend on browser
+ * JavaScript being allowed to read Coinbase's CB-AFTER / CB-BEFORE headers.
+ */
+export async function fetchTrades({
+  symbol, signal, fetchFn = fetch, afterTradeId = null, throughTradeId = Infinity, maxPages = 10,
+}) {
+  if (afterTradeId !== null && (!Number.isSafeInteger(afterTradeId) || afterTradeId < 0)) {
+    throw new RangeError('afterTradeId must be a non-negative safe integer');
+  }
+  if (afterTradeId !== null && (!Number.isSafeInteger(throughTradeId) || throughTradeId < afterTradeId)) {
+    throw new RangeError('throughTradeId must be a safe integer >= afterTradeId');
+  }
+  if (!Number.isInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive integer');
+
+  const collected = new Map();
+  let cursor = null;
+  let pages = 0;
+  let oldestSeen = Infinity;
+
+  while (pages < (afterTradeId === null ? 1 : maxPages)) {
+    const params = new URLSearchParams({ limit: String(MAX_TRADES) });
+    if (afterTradeId !== null) params.set(cursor === null ? 'before' : 'after', String(cursor ?? afterTradeId));
+    const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?${params}`;
+    const res = await fetchFn(url, { signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
+
+    const page = body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time)).filter(Boolean);
+    pages++;
+    for (const trade of page) {
+      if ((afterTradeId === null || trade.tradeId > afterTradeId) && trade.tradeId <= throughTradeId) {
+        collected.set(trade.tradeId, trade);
+      }
+      oldestSeen = Math.min(oldestSeen, trade.tradeId);
+    }
+
+    if (afterTradeId === null || page.length < MAX_TRADES || oldestSeen <= afterTradeId) break;
+    const nextCursor = Math.min(...page.map((trade) => trade.tradeId));
+    if (!Number.isSafeInteger(nextCursor) || nextCursor >= cursor && cursor !== null) {
+      throw new Error('Coinbase trade pagination did not advance');
+    }
+    cursor = nextCursor;
+  }
+
+  if (afterTradeId !== null && oldestSeen > afterTradeId && pages >= maxPages) {
+    throw new Error(`trade recovery exceeds ${maxPages * MAX_TRADES} REST records`);
+  }
+  return [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
 }
 
 const sameNumber = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -216,7 +260,7 @@ export function openStream({
     if (target <= lastId) return; // the missing trades arrived in the meantime
     recovering = true;
     try {
-      const fromRest = new Map((await fetchTrades({ symbol, fetchFn })).map((t) => [t.tradeId, t]));
+      const fromRest = new Map((await fetchTrades({ symbol, fetchFn, afterTradeId: lastId, throughTradeId: target })).map((t) => [t.tradeId, t]));
       if (closedByUs) return;
       let fetched = 0;
       for (let id = lastId + 1; id <= target; id++) {
