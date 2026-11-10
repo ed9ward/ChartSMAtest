@@ -64,19 +64,37 @@ def ema_series(c, source, period, seed):
     return {"indicator": "ema", "seed": seed, "reference": reference, "source": source, "period": period, "lines": {"ema": cleaned(values)}}
 
 
-def build(dataset_id, title, rows, sources, periods):
+# The grid, declared once: it drives the generation and is written into the file as `spec`, and the JS side
+# (checks/reference-spec.js) declares the same grid on its own. verify() refuses to write an incomplete file.
+SOURCES_ALL = SOURCES
+DATASET_SPECS = [
+    {"id": "real50", "candles": 50, "sources": SOURCES_ALL, "periods": [5, 14, 20]},
+    {"id": "walk300", "candles": 300, "sources": ["close", "hlc3", "volume"], "periods": [14, 50, 200]},
+]
+VARIANTS = [
+    {"indicator": "sma"},
+    {"indicator": "ema", "seed": "first", "reference": "pandas"},
+    {"indicator": "ema", "seed": "sma", "reference": "TA-Lib"},
+    {"indicator": "bb", "mult": 2},
+    {"indicator": "rsi"},
+]
+
+
+def make_series(c, variant, source, period):
+    if variant["indicator"] == "ema":
+        return ema_series(c, source, period, variant["seed"])
+    return series_for(c, variant["indicator"], source, period)
+
+
+def build(dataset_spec, title, rows):
     c = {k: np.array([r[k] for r in rows], dtype=float) for k in ("open", "high", "low", "close", "volume")}
-    series = []
-    for source in sources:
-        for period in periods:
-            if period >= len(rows):
-                continue
-            series.append(series_for(c, "sma", source, period))
-            series.append(ema_series(c, source, period, "first"))
-            series.append(ema_series(c, source, period, "sma"))
-            series.append(series_for(c, "bb", source, period))
-            series.append(series_for(c, "rsi", source, period))
-    return {"id": dataset_id, "title": title, "candles": rows, "series": series}
+    series = [
+        make_series(c, variant, source, period)
+        for source in dataset_spec["sources"]
+        for period in dataset_spec["periods"]
+        for variant in VARIANTS
+    ]
+    return {"id": dataset_spec["id"], "title": title, "candles": rows, "series": series}
 
 
 def real_rows():
@@ -105,9 +123,10 @@ def random_walk_rows(count=300, seed=7):
 
 
 datasets = [
-    build("real50", "50 real BTCUSDT 1m bars from Binance", real_rows(), SOURCES, [5, 14, 20]),
-    build("walk300", "300 random-walk bars (generated independently of the app)", random_walk_rows(), ["close", "hlc3", "volume"], [14, 50, 200]),
+    build(DATASET_SPECS[0], "50 real BTCUSDT 1m bars from Binance", real_rows()),
+    build(DATASET_SPECS[1], "300 random-walk bars (generated independently of the app)", random_walk_rows()),
 ]
+
 # --- RSI edge cases: what each convention says when there is no movement at all -----------------------------------
 # TradingView's published RSI code:  up = rma(max(change, 0), n); down = rma(-min(change, 0), n)
 #                                    rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - 100 / (1 + up / down)
@@ -162,7 +181,50 @@ for title, closes, period in rsi_edge_scenarios():
     ta = cleaned(talib.RSI(np.array(closes), period)) if period >= 2 else None  # TA-Lib needs a period of at least 2
     rsi_edge.append({"title": title, "period": period, "closes": closes, "tradingview": tv, "talib": ta, "flatBars": flat_bars})
 
-doc = {"generatedWith": {"TA-Lib": talib.__version__, "pandas": pd.__version__, "numpy": np.__version__}, "datasets": datasets, "rsiEdge": rsi_edge}
+LINES = {"sma": ["sma"], "ema": ["ema"], "bb": ["upper", "basis", "lower"], "rsi": ["rsi"]}
+
+
+def warmup(variant, period):
+    if variant["indicator"] == "rsi":
+        return period
+    return 0 if variant["indicator"] == "ema" and variant.get("seed") == "first" else period - 1
+
+
+def verify(doc):
+    """Refuses to write a file that lacks anything it should have, or has something it should not."""
+    assert doc["spec"]["datasets"] == [{k: d[k] for k in ("id", "candles", "sources", "periods")} for d in DATASET_SPECS]
+    assert [d["id"] for d in doc["datasets"]] == [d["id"] for d in DATASET_SPECS]
+    for spec, dataset in zip(DATASET_SPECS, doc["datasets"]):
+        n = len(dataset["candles"])
+        assert n == spec["candles"], f"{spec['id']}: {n} candles"
+        times = [c["time"] for c in dataset["candles"]]
+        assert all(b > a for a, b in zip(times, times[1:])), f"{spec['id']}: candle times are not increasing"
+        wanted = [(v["indicator"], v.get("seed"), source, period) for source in spec["sources"] for period in spec["periods"] for v in VARIANTS]
+        got = [(s["indicator"], s.get("seed"), s["source"], s["period"]) for s in dataset["series"]]
+        assert sorted(map(str, got)) == sorted(map(str, wanted)), f"{spec['id']}: the series are not exactly the expected ones"
+        assert len(set(map(str, got))) == len(got), f"{spec['id']}: a series appears twice"
+        for s in dataset["series"]:
+            variant = next(v for v in VARIANTS if v["indicator"] == s["indicator"] and v.get("seed") == s.get("seed"))
+            assert sorted(s["lines"]) == sorted(LINES[s["indicator"]]), f"{spec['id']}: lines of {s['indicator']}"
+            for line, values in s["lines"].items():
+                assert len(values) == n, f"{spec['id']}: {s['indicator']}/{line} has {len(values)} values"
+                first = warmup(variant, s["period"])
+                assert all((v is None) == (i < first) for i, v in enumerate(values)), f"{spec['id']}: {s['indicator']}/{line} has a wrong warm-up"
+    assert [e["title"] for e in doc["rsiEdge"]] == doc["spec"]["rsiEdge"]
+
+
+doc = {
+    "generatedWith": {"TA-Lib": talib.__version__, "pandas": pd.__version__, "numpy": np.__version__},
+    "spec": {
+        "datasets": [{k: d[k] for k in ("id", "candles", "sources", "periods")} for d in DATASET_SPECS],
+        "variants": VARIANTS,
+        "rsiEdge": [e["title"] for e in rsi_edge],
+        "libraries": ["TA-Lib", "pandas", "numpy"],
+    },
+    "datasets": datasets,
+    "rsiEdge": rsi_edge,
+}
+verify(doc)
 path = FIXTURES / "talib-reference.json"
 path.write_text(json.dumps(doc, separators=(",", ":")))
 print(path, f"{path.stat().st_size / 1024:.0f} KB", [(d["id"], len(d["series"])) for d in datasets])

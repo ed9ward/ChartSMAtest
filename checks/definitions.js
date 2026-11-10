@@ -9,7 +9,8 @@ import { parseKline, parseKlineMessage, dayChangePercent, formatPercent, INTERVA
 import { refSMA, refEMA, refBB, refRSI, compareSeries } from './reference.js';
 import { expectedBars } from './data.js';
 import { assert, equal, close, throws } from './assert.js';
-import { compareIndicator } from './compare.js';
+import { compareIndicator, comparisonProblem } from './compare.js';
+import { verifyReference } from './reference-spec.js';
 import { parseCandleRow, parseMatch, parseHeartbeat, openStream as openCoinbaseStream, COINBASE_GRANULARITY } from '../src/coinbase.js';
 
 const DATA = generateCandles({ seed: 42, count: 300 });
@@ -423,7 +424,13 @@ const COMPARISONS = [
 ];
 
 function talibGroup(ctx) {
-  const checks = [];
+  const checks = [{
+    name: 'the reference file is complete: exactly the expected series, lines, values and scenarios',
+    run: async () => {
+      const problems = verifyReference(await ctx.talibReference());
+      if (problems.length) throw new Error(`${problems.length} problem(s), e.g. ${problems[0]}`);
+    },
+  }];
   for (const datasetId of ['real50', 'walk300']) {
     for (const { key, indicator, start, title } of COMPARISONS) {
       checks.push({
@@ -433,12 +440,8 @@ function talibGroup(ctx) {
           assert(dataset, `dataset ${datasetId} is not in the reference file`);
           const stats = compareIndicator(dataset, indicator, start);
           const detail = { stats: { ...stats, dataset: dataset.title, datasetId, indicator: title, key } };
-          const fail = (message) => Object.assign(new Error(message), { detail }); // the table still shows the numbers
-          if (stats.compared === 0) throw fail('nothing was compared');
-          if (stats.missing || stats.extra) throw fail(`${stats.missing} values missing, ${stats.extra} unexpected`);
-          if (stats.identical !== stats.compared) {
-            throw fail(`${stats.compared - stats.identical} of ${stats.compared} values differ, worst: ${JSON.stringify(stats.worst)}`);
-          }
+          const problem = comparisonProblem(stats);
+          if (problem) throw Object.assign(new Error(problem), { detail }); // the table still shows the numbers
           return detail;
         },
       });

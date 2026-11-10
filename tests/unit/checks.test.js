@@ -56,6 +56,33 @@ describe('the in-page check suite (everything that does not need a browser)', ()
     expect(c.results.map((r) => r.ok)).toEqual([true, false]);
   });
 
+  it('a series missing from the reference file fails the completeness check and the comparison it belongs to, although the rest compares fine', async () => {
+    const copy = JSON.parse(JSON.stringify(talib));
+    const removed = copy.datasets[0].series.splice(3, 1)[0]; // a Bollinger series of the first dataset
+    expect(removed.indicator).toBe('bb');
+    const summary = await runChecks(buildGroups({ ...ctx, talibReference: async () => copy }), { include: (c) => !c.ui && /reference file is complete|equals the reference library/.test(c.name) });
+    const failed = summary.results.filter((r) => !r.ok);
+    expect(failed.map((r) => r.name).sort()).toEqual([
+      'Bollinger Bands on real50 equals the reference library',
+      'the reference file is complete: exactly the expected series, lines, values and scenarios',
+    ]);
+    expect(failed.find((r) => /Bollinger/.test(r.name)).error).toMatch(/problem/);
+    expect(failed.find((r) => /Bollinger/.test(r.name)).detail.stats.compared).toBeGreaterThan(500); // the numbers are still shown
+  });
+
+  it('a series that appears twice or one nobody asked for is found too', async () => {
+    for (const mutate of [
+      (c) => c.datasets[1].series.push(JSON.parse(JSON.stringify(c.datasets[1].series[0]))),
+      (c) => c.datasets[1].series.push({ ...JSON.parse(JSON.stringify(c.datasets[1].series[0])), period: 21 }),
+    ]) {
+      const copy = JSON.parse(JSON.stringify(talib));
+      mutate(copy);
+      const summary = await runChecks(buildGroups({ ...ctx, talibReference: async () => copy }), { include: (c) => !c.ui && /reference file is complete|equals the reference library/.test(c.name) });
+      expect(summary.results.filter((r) => !r.ok).map((r) => r.name)).toContain('the reference file is complete: exactly the expected series, lines, values and scenarios');
+      expect(summary.failed).toBeGreaterThanOrEqual(2);
+    }
+  });
+
   it('the runner reports a failing check with its message and keeps going', async () => {
     const groups = [{ id: 'x', title: 'X', checks: [
       { name: 'bad', run: () => { throw new Error('boom'); } },
