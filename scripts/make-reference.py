@@ -76,6 +76,7 @@ DATASET_SPECS = [
     {"id": "huge", "candles": 300, "sources": ["close"], "periods": [14, 50]},       # prices around 50 million
     {"id": "negative", "candles": 300, "sources": ["close"], "periods": [14, 50]},   # prices that cross zero (spreads, some futures)
     {"id": "long2000", "candles": 2000, "sources": ["close"], "periods": [14, 200]}, # a long series
+    {"id": "real500", "candles": 500, "sources": ["close", "hlc3", "volume"], "periods": [14, 50, 200]},  # 500 real bars, 14:39-22:58 UTC
 ]
 VARIANTS = [
     {"indicator": "sma"},
@@ -103,8 +104,8 @@ def build(dataset_spec, title, rows):
     return {"id": dataset_spec["id"], "title": title, "candles": rows, "series": series}
 
 
-def real_rows():
-    raw = json.loads((FIXTURES / "btcusdt-1m.json").read_text())
+def real_rows(name="btcusdt-1m.json"):
+    raw = json.loads((FIXTURES / name).read_text())
     return [
         {"time": int(r[0]) // 1000, "open": float(r[1]), "high": float(r[2]), "low": float(r[3]), "close": float(r[4]), "volume": float(r[5])}
         for r in raw
@@ -135,6 +136,7 @@ datasets = [
     build(DATASET_SPECS[3], "300 random-walk bars, prices around 50 million", random_walk_rows(300, 12, 5e7, 2.5e5, 0)),
     build(DATASET_SPECS[4], "300 random-walk bars, prices crossing zero", random_walk_rows(300, 13, 3.0, 1.0, 3)),
     build(DATASET_SPECS[5], "2000 random-walk bars", random_walk_rows(2000, 14)),
+    build(DATASET_SPECS[6], "500 real BTCUSDT 1m bars from Binance (10 Nov 2026, 14:39-22:58 UTC)", real_rows("binance-btcusdt-1m-500.json")),
 ]
 
 # --- RSI edge cases: what each convention says when there is no movement at all -----------------------------------
