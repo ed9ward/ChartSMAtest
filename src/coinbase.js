@@ -55,7 +55,7 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
 // Numbers arrive as numbers or as numeric strings; null, empty strings and objects are not numbers (Number(null) would be 0).
 const toNumber = (x) => parseFiniteNumber(x) ?? NaN;
 
-const ISO_TIMESTAMP = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d+)?(?:Z|[+-](\\d{2}):(\\d{2}))$/i;
+const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/i;
 
 const parseTradeTimestamp = (value) => {
   if (typeof value !== 'string') return NaN;
