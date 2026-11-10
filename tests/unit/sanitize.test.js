@@ -69,6 +69,33 @@ describe('sanitizeCandles', () => {
     expect(r.candles).toEqual(data);
     expect(r.issues).toEqual(['source omitted 2 candle interval(s); indicators use returned candles only']);
   });
+  it('reports gaps even when malformed rows were also dropped', () => {
+    const data = [
+      { time: 0, open: 10, high: 10, low: 10, close: 10, volume: 1 },
+      { time: 60, open: 11, high: 11, low: 11, close: 11, volume: 1 },
+      { time: 120, open: NaN, high: 12, low: 12, close: 12, volume: 1 },
+      { time: 240, open: 12, high: 12, low: 12, close: 12, volume: 1 },
+    ];
+    const r = sanitizeCandles(data, 60);
+    expect(r.candles.map((c) => c.time)).toEqual([0, 60, 240]);
+    expect(r.issues).toEqual([
+      'dropped 1 invalid candle(s)',
+      'source omitted 2 candle interval(s); indicators use returned candles only',
+    ]);
+  });
+  it('drops candles that are not aligned to the selected timeframe', () => {
+    const data = [
+      { time: 0, open: 10, high: 10, low: 10, close: 10, volume: 1 },
+      { time: 61, open: 11, high: 11, low: 11, close: 11, volume: 1 },
+      { time: 120, open: 12, high: 12, low: 12, close: 12, volume: 1 },
+    ];
+    const r = sanitizeCandles(data, 60);
+    expect(r.candles.map((c) => c.time)).toEqual([0, 120]);
+    expect(r.issues).toEqual([
+      'dropped 1 invalid candle(s)',
+      'source omitted 1 candle interval(s); indicators use returned candles only',
+    ]);
+  });
   it('rejects invalid intervals for gap detection', () => {
     for (const interval of [0, -60, 1.5, NaN, Infinity, '60']) {
       expect(() => sanitizeCandles(good, interval)).toThrow(RangeError);
