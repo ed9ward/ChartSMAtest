@@ -30,5 +30,7 @@ export const SCENARIOS = {
     const price = 100 + Math.min(i, 30) + (i < 30 && i % 2 === 1 ? -2 : 0);
     return { ...c, open: price, high: price, low: price, close: price, volume: 10 };
   }),
+  // a coin worth a hundred-thousandth of a dollar: the prices need 8 decimals to be read at all
+  tiny: () => base().map((c) => ({ ...c, open: c.open * 1.234e-7, high: c.high * 1.234e-7, low: c.low * 1.234e-7, close: c.close * 1.234e-7 })),
   empty: () => [],
 };

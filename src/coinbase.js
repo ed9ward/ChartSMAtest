@@ -103,7 +103,7 @@ const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k
  *   message of the server, onClose() when the connection ends without close() being called.
  */
 export function openStream({
-  symbol, interval, onKline, onClose, onError, onEvent, onResync, seed,
+  symbol, interval, onKline, onClose, onError, onEvent, onResync, onActivity, seed,
   WS = WebSocket, fetchFn = fetch, graceMs = 300, reconcileDelayMs = 2000,
 }) {
   const granularity = COINBASE_GRANULARITY[interval];
@@ -220,6 +220,7 @@ export function openStream({
   }));
 
   ws.onmessage = (message) => {
+    onActivity?.(); // any message at all shows that the connection is alive (heartbeats come every second)
     if (gaveUp) return;
     const msg = asObject(message.data);
     if (msg?.type === 'error') return void onError?.(msg.message || msg.reason || 'error');

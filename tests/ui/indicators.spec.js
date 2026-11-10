@@ -1,6 +1,7 @@
 import { test, expect, open, candleData, probeLine, expectLineAt } from './fixtures.js';
 import { SOURCES } from '../../src/sma.js';
 import { settleBars } from '../../src/indicators.js';
+import { priceDecimals } from '../../src/format.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
 import { mulberry32 } from '../../src/generator.js';
@@ -359,6 +360,124 @@ test.describe('switching indicators', () => {
   });
 });
 
+test.describe('what a trader reads: prices of any size, and the zoom', () => {
+  const precision = (page, which = 'candleSeries') => page.evaluate((w) => (w === 'candleSeries' ? window.__app.candleSeries : window.__app.smaSeries).options().priceFormat.precision, which);
+
+  test('a coin priced around 0.00001: the legend and the price scale show 8 decimals, not 0.00', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('tiny');
+    const closes = sanitizeCandles(SCENARIOS.tiny()).candles.map((c) => c.close);
+    expect(priceDecimals(closes)).toBe(8);
+    const last = closes.at(-1).toFixed(8);
+    expect(Number(last)).toBeGreaterThan(0); // sanity: the expected text is a real price
+    await expect(page.getByTestId('last-close')).toHaveText(last);
+    await expect(page.getByTestId('last-close')).not.toHaveText('0.00');
+    expect(await precision(page)).toBe(8);
+    expect(await page.evaluate(() => window.__app.candleSeries.options().priceFormat.minMove)).toBeCloseTo(1e-8, 12);
+  });
+
+  test('every indicator line of such a coin is shown with enough decimals too', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('tiny');
+    for (const kind of ['sma', 'ema']) {
+      await pick(page, kind);
+      expect(await precision(page, 'line')).toBe(8);
+      const want = (await lineData(page, kind)).at(-1).value.toFixed(8);
+      await expect(page.getByTestId('last-sma')).toHaveText(want);
+      expect(want).not.toBe('0.00000000');
+    }
+    await pick(page, 'bb');
+    const bands = Object.fromEntries(await Promise.all(['upper', 'lower'].map(async (k) => [k, (await lineData(page, k)).at(-1).value.toFixed(8)])));
+    await expect(page.getByTestId('last-bb-upper')).toHaveText(bands.upper);
+    await expect(page.getByTestId('last-bb-lower')).toHaveText(bands.lower);
+    expect(Number(bands.upper)).toBeGreaterThan(Number(bands.lower));
+  });
+
+  test('RSI is always shown with 2 decimals, and the volume source with its own size', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('tiny');
+    await pick(page, 'rsi');
+    expect(await precision(page, 'line')).toBe(2);
+    await expect(page.getByTestId('last-sma')).toHaveText(/^\d+\.\d{2}$/);
+    await pick(page, 'sma', { source: 'volume' }); // volumes are 10s, whatever the price
+    expect(await precision(page, 'line')).toBe(2);
+  });
+
+  test('ordinary prices keep 2 decimals: BTC-like, ETH-like, huge and negative', async ({ page }) => {
+    await open(page);
+    for (const name of ['normal', 'huge', 'negative', 'long']) {
+      await page.getByTestId('scenario').selectOption(name);
+      expect(await precision(page), name).toBe(2);
+      await expect(page.getByTestId('last-close')).toHaveText(/^-?\d+\.\d{2}$/);
+    }
+  });
+
+  test('the price scale follows the data when the data set changes, and back', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('tiny');
+    expect(await precision(page)).toBe(8);
+    await page.getByTestId('scenario').selectOption('normal');
+    expect(await precision(page)).toBe(2);
+    await expect(page.getByTestId('last-close')).toHaveText(sanitizeCandles(SCENARIOS.normal()).candles.at(-1).close.toFixed(2));
+  });
+
+  test('a flat market at a tiny price is also readable', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('flat');
+    expect(await precision(page)).toBe(2); // flat at 100
+  });
+
+  test('the zoom the user chose survives a change of source, period, indicator, EMA start and multiplier', async ({ page }) => {
+    await open(page);
+    const range = () => page.evaluate(() => window.__app.chart.timeScale().getVisibleLogicalRange());
+    // the chart may still be doing its first fit: set the range until it holds
+    await expect.poll(async () => {
+      await page.evaluate(() => window.__app.chart.timeScale().setVisibleLogicalRange({ from: 38, to: 62 }));
+      const r = await range();
+      return r.to - r.from;
+    }).toBeLessThan(30);
+    const zoomed = await range();
+    const same = async (label) => {
+      const now = await range();
+      expect(now.from, label).toBeCloseTo(zoomed.from, 3);
+      expect(now.to, label).toBeCloseTo(zoomed.to, 3);
+    };
+    await page.getByTestId('source').selectOption('hl2');
+    await same('source');
+    await page.getByTestId('period').fill('9');
+    await same('period');
+    await pick(page, 'ema');
+    await same('indicator');
+    await page.getByTestId('ema-start').selectOption('sma');
+    await same('EMA start');
+    await pick(page, 'bb');
+    await page.getByTestId('mult').fill('3');
+    await same('multiplier');
+    await pick(page, 'rsi');
+    await same('RSI pane');
+  });
+
+  test('new data does fit the chart again: changing the data set resets the zoom', async ({ page }) => {
+    await open(page);
+    await expect.poll(async () => {
+      await page.evaluate(() => window.__app.chart.timeScale().setVisibleLogicalRange({ from: 50, to: 62 }));
+      const r = await page.evaluate(() => window.__app.chart.timeScale().getVisibleLogicalRange());
+      return r.to - r.from;
+    }).toBeLessThan(30);
+    await page.getByTestId('scenario').selectOption('long');
+    const range = await page.evaluate(() => window.__app.chart.timeScale().getVisibleLogicalRange());
+    expect(range.to - range.from).toBeGreaterThan(1500); // all 2000 bars
+  });
+
+  test('the time of the last update is 00:05, never 24:05, just after midnight', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T00:05:09Z') });
+    await open(page);
+    await expect(page.getByTestId('last-update')).toHaveText('00:05:09 (0 s ago)');
+    await page.clock.fastForward(3000);
+    await expect(page.getByTestId('last-update')).toHaveText('00:05:09 (3 s ago)');
+  });
+});
+
 test.describe('the note about indicators that have not settled', () => {
   const note = (page) => page.getByTestId('settle-note');
 
@@ -375,9 +494,46 @@ test.describe('the note about indicators that have not settled', () => {
     await pick(page, 'rsi');
     await expect(note(page)).toContainText('RSI(14) has not settled: 60 bars loaded, about 109 needed');
     for (const kind of ['sma', 'bb']) {
-      await pick(page, kind, { period: 200 });
+      await pick(page, kind, { period: 20 });
       await expect(note(page)).toBeHidden();
     }
+  });
+
+  test('a period longer than the history: the line is empty, and the page says why', async ({ page }) => {
+    await open(page);
+    await pick(page, 'sma', { period: 200 });
+    await expect(note(page)).toHaveText('SMA(200) has no values yet: it needs 200 bars and 60 are loaded, so its line is empty.');
+    await expect(page.getByTestId('last-sma')).toHaveText('—');
+    await pick(page, 'bb', { period: 61 });
+    await expect(note(page)).toContainText('BB(61) has no values yet: it needs 61 bars and 60 are loaded');
+    await pick(page, 'rsi', { period: 60 });
+    await expect(note(page)).toContainText('RSI(60) has no values yet: it needs 61 bars');
+    await pick(page, 'sma', { period: 60 });             // exactly enough: one value, no note
+    await expect(note(page)).toBeHidden();
+    await expect(page.getByTestId('last-sma')).not.toHaveText('—');
+  });
+
+  test('the EMA with the first-value start has a value from the first bar; with the SMA start it waits for a full window', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema', { period: 100 });
+    await expect(note(page)).toContainText('EMA(100) has not settled'); // values exist
+    await page.getByTestId('ema-start').selectOption('sma');
+    await expect(note(page)).toHaveText('EMA(100) has no values yet: it needs 100 bars and 60 are loaded, so its line is empty.');
+  });
+
+  test('the note goes away by itself when the bars come in', async ({ page }) => {
+    await open(page);
+    await pick(page, 'sma', { period: 62 });
+    await expect(note(page)).toContainText('has no values yet: it needs 62 bars and 60 are loaded');
+    await page.evaluate(() => { for (let i = 0; i < 6; i++) window.__app.step(); }); // 5 ticks per bar: the 1st opens bar 61, the 6th opens bar 62
+    await expect(page.getByTestId('bar-count')).toHaveText('62');
+    await expect(note(page)).toBeHidden();
+    await expect(page.getByTestId('last-sma')).not.toHaveText('—');
+  });
+
+  test('the time axis says that it is in UTC', async ({ page }) => {
+    await open(page);
+    await expect(page.getByTestId('axis-note')).toContainText('Time axis: UTC');
   });
 
   test('changing the period updates it: a short EMA is settled, a long one is not', async ({ page }) => {

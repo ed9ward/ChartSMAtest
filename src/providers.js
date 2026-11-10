@@ -6,12 +6,18 @@ export const PROVIDERS = {
   binance: {
     label: 'Binance',
     symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'],
+    historyBars: 1000,       // Binance allows 1000 candles per request: the most history for EMA and RSI to settle on
+    reloadOnBarGap: true,    // a bar that starts later than the next one may mean lost messages: take the history again
+    staleMs: 30_000,         // no message at all for this long: the connection is dead (kline updates come every ~2 s)
     fetchHistory: binance.fetchHistory,
     openStream: binance.openStream,
   },
   coinbase: {
     label: 'Coinbase',
     symbols: ['BTC-USD', 'ETH-USD', 'SOL-USD'],
+    historyBars: 300,        // Coinbase allows 300 candles per request
+    reloadOnBarGap: false,   // trades are tracked by id, so a minute without trades is just a minute without trades
+    staleMs: 10_000,         // heartbeats come every second
     fetchHistory: coinbase.fetchHistory,
     openStream: coinbase.openStream,
   },

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { computeEMA, computeBB, computeRSI, computeIndicator, INDICATORS, validateParams, settleBars } from '../../src/indicators.js';
+import { computeEMA, computeBB, computeRSI, computeIndicator, INDICATORS, validateParams, settleBars, minBars } from '../../src/indicators.js';
 import { generateCandles } from '../../src/generator.js';
 import { parseKline } from '../../src/live.js';
 import { refEMA, refBB, refRSI, expectSeriesClose } from './helpers.js';
@@ -371,6 +371,34 @@ describe('settleBars: how much history a recursive indicator needs to forget whe
   });
   it.each([0, -1, 1.5, NaN])('rejects the period %s', (period) => {
     expect(() => settleBars('ema', period)).toThrow(RangeError);
+  });
+});
+
+describe('minBars: when does the first value appear', () => {
+  it.each([
+    ['sma', 20, undefined, 20], ['sma', 1, undefined, 1], ['bb', 20, undefined, 20], ['bb', 200, undefined, 200],
+    ['ema', 20, undefined, 1], ['ema', 20, { start: 'first' }, 1], ['ema', 20, { start: 'sma' }, 20], ['ema', 1, { start: 'sma' }, 1],
+    ['rsi', 14, undefined, 15], ['rsi', 1, undefined, 2],
+  ])('%s(%i) %j needs %i bars', (kind, period, options, bars) => {
+    expect(minBars(kind, period, options)).toBe(bars);
+  });
+
+  // the property that matters: the first point of the line is on exactly that bar, and one bar fewer gives no line at all
+  const params = { period: 14, mult: 2, start: 'first' };
+  for (const [kind, period, start] of [['sma', 5, 'first'], ['sma', 20, 'first'], ['bb', 9, 'first'], ['ema', 7, 'first'], ['ema', 7, 'sma'], ['ema', 30, 'sma'], ['rsi', 5, 'first'], ['rsi', 14, 'first']]) {
+    it(`${kind}(${period}) start ${start}: the line begins at bar number ${minBars(kind, period, { start })}, not earlier`, () => {
+      const candles = generateCandles({ seed: 4, count: 80 });
+      const lines = computeIndicator(kind, candles, { ...params, period, start }, 'close');
+      const first = Math.min(...Object.values(lines).map((l) => candles.findIndex((c) => c.time === l[0].time)));
+      expect(first + 1).toBe(minBars(kind, period, { start }));
+      const fewer = computeIndicator(kind, candles.slice(0, minBars(kind, period, { start }) - 1), { ...params, period, start }, 'close');
+      expect(Object.values(fewer).every((l) => l.length === 0)).toBe(true);
+      const exactly = computeIndicator(kind, candles.slice(0, minBars(kind, period, { start })), { ...params, period, start }, 'close');
+      expect(Object.values(exactly).every((l) => l.length === 1)).toBe(true);
+    });
+  }
+  it.each([0, -1, 1.5, NaN])('rejects the period %s', (period) => {
+    expect(() => minBars('sma', period)).toThrow(RangeError);
   });
 });
 

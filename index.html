@@ -10,6 +10,7 @@
     label { display: flex; gap: 6px; align-items: center; }
     [hidden] { display: none !important; }
     #day-change.up { color: #2e7d32; } #day-change.down { color: #c62828; }
+    .axis-note { color: #666; font-size: 12px; margin: 2px 0; }
     .note { color: #8a5a00; background: #fff6e0; border: 1px solid #f0d9a0; padding: 4px 8px; margin: 4px 0; font-size: 13px; }
     input[type=number] { width: 70px; }
     #chart { width: 900px; max-width: 100%; height: 500px; border: 1px solid #ddd; }
@@ -43,7 +44,7 @@
     <label>Data
       <select id="scenario" data-testid="scenario">
         <option>normal</option><option>long</option><option>negative</option><option>huge</option><option>overflow</option>
-        <option>nan</option><option>inconsistent</option><option>flat</option><option>stalled</option><option>duplicates</option><option>unordered</option><option>empty</option>
+        <option>nan</option><option>inconsistent</option><option>flat</option><option>stalled</option><option>tiny</option><option>duplicates</option><option>unordered</option><option>empty</option>
         <option value="binance">Binance live</option>
         <option value="coinbase">Coinbase live</option>
       </select>
@@ -73,6 +74,7 @@
   </div>
   <div id="status" data-testid="status" role="status">OK</div>
   <div id="settle-note" data-testid="settle-note" class="note" hidden></div>
+  <div class="axis-note" data-testid="axis-note">Time axis: UTC (the update time above is your local time)</div>
   <div id="chart" data-testid="chart"></div>
 
   <script src="vendor/lightweight-charts.standalone.production.js"></script>

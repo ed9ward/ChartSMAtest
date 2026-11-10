@@ -184,6 +184,14 @@ export function settleBars(kind, period, { start = 'first', tolerance = 1e-3 } =
   return warmup + fade + 1;
 }
 
+/** How many bars it takes for the indicator to show its first value (before that the line is simply empty). */
+export function minBars(kind, period, { start = 'first' } = {}) {
+  assertPeriod(period);
+  if (kind === 'rsi') return period + 1;                       // `period` changes need `period` + 1 prices
+  if (kind === 'ema') return start === 'sma' ? period : 1;     // the SMA start waits for a full window; the first-value start does not
+  return period;                                               // SMA and Bollinger Bands: one full window
+}
+
 export function validateParams(kind, params) {
   assertPeriod(params.period);
   if (kind === 'bb') assertMultiplier(params.mult);

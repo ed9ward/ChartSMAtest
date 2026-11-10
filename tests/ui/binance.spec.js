@@ -74,7 +74,7 @@ test.describe('history', () => {
     // golden values were calculated outside JavaScript
     await expect(page.getByTestId('last-close')).toHaveText('73488.00');
     await expect(page.getByTestId('last-sma')).toHaveText('73310.66');
-    expect(mock.requests[0].search).toBe('?symbol=BTCUSDT&interval=1m&limit=500');
+    expect(mock.requests[0].search).toBe('?symbol=BTCUSDT&interval=1m&limit=1000'); // the most Binance gives: EMA and RSI settle better
     expect(mock.sockets[0].url).toContain('btcusdt@kline_1m');
   });
 
@@ -255,14 +255,16 @@ test.describe('connection problems', () => {
     await expect(page.getByTestId('last-close')).toHaveText('5000.00');
   });
 
-  test('the server dropping the connection is shown and can be recovered', async ({ page }) => {
+  test('the server dropping the connection is shown, and the app reconnects by itself', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
     const mock = await mockBinance(page);
     await goLive(page, mock);
     mock.sockets[0].ws.close();
-    await expect(page.getByTestId('status')).toHaveText('Feed disconnected');
-    await page.getByTestId('reconnect').click();
+    await expect(page.getByTestId('status')).toHaveText('Feed disconnected; reconnecting in 1 s (attempt 1)');
+    await page.clock.fastForward(1000);
     await expect.poll(() => mock.sockets.length).toBe(2);
     await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m');
+    expect(mock.requests).toHaveLength(2); // the history was taken again, so nothing that happened meanwhile is missing
   });
 
   test('settings changed while disconnected apply to the data', async ({ page }) => {
@@ -509,18 +511,37 @@ test.describe('update time and change per day', () => {
     await expect(page.getByTestId('day-change')).toHaveText('—');
   });
 
-  test('a new UTC day refreshes the previous close', async ({ page }) => {
-    await page.clock.install({ time: new Date('2026-11-10T23:59:50Z') });
-    const mock = await mockBinance(page, undefined, { daily: (_, n) => ({ body: dailyRows(n === 1 ? 75800 : 74000) }) });
+  // Bars as Binance sends them, ending at 23:58 UTC on 10 November.
+  const nightBars = (n = 30) => Array.from({ length: n }, (_, i) => {
+    const t = Date.UTC(2026, 10, 10, 23, 58) - 60_000 * (n - 1 - i);
+    return [t, '73488', '73490', '73480', '73488', '1', 0, '0', 0, '0', '0', '0'];
+  });
+  const MIDNIGHT = Date.UTC(2026, 10, 11);
+
+  test('a new UTC day is seen from the exchange\'s own bars, whatever the computer\'s clock says', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T12:00:00Z') }); // the computer's clock is hours behind the exchange
+    const mock = await mockBinance(page, () => ({ body: nightBars() }), { daily: (_, n) => ({ body: dailyRows(n === 1 ? 75800 : 74000) }) });
     await goLive(page, mock);
     await expect(page.getByTestId('day-change')).toHaveText('-3.05%');
-    await page.clock.fastForward(20_000); // it is now 2026-11-11 00:00:10 UTC
-    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73488 }));
+    mock.sockets[0].ws.send(klineMsg({ t: MIDNIGHT - 60_000, o: 73488, h: 73490, l: 73480, c: 73488 })); // 23:59: still the same day
+    await expect(page.getByTestId('bar-count')).toHaveText('31');
+    expect(mock.dailyRequests).toHaveLength(1);
+    mock.sockets[0].ws.send(klineMsg({ t: MIDNIGHT, o: 73488, h: 73490, l: 73480, c: 73488 }));          // 00:00 on 11 November
     await expect.poll(() => mock.dailyRequests.length).toBe(2);
     await expect(page.getByTestId('day-change')).toHaveText('-0.69%'); // (73488 - 74000) / 74000
-    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73489 }));
+    mock.sockets[0].ws.send(klineMsg({ t: MIDNIGHT, o: 73488, h: 73495, l: 73480, c: 73489 }));
     await page.waitForTimeout(200);
     expect(mock.dailyRequests).toHaveLength(2); // asked once for the new day, not on every tick
+  });
+
+  test('the computer\'s clock being wrong the other way (already tomorrow) causes no refresh either', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-12T08:00:00Z') });
+    const mock = await mockBinance(page, () => ({ body: nightBars() }));
+    await goLive(page, mock);
+    mock.sockets[0].ws.send(klineMsg({ t: MIDNIGHT - 60_000, o: 73488, h: 73490, l: 73480, c: 73490 }));
+    await expect(page.getByTestId('last-close')).toHaveText('73490.00');
+    await page.waitForTimeout(200);
+    expect(mock.dailyRequests).toHaveLength(1);
   });
 
   test('switching to demo data hides the day figure again', async ({ page }) => {
@@ -672,5 +693,248 @@ test.describe('impossible candles', () => {
     ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: -1000 }));
     ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: 7 }));
     await expect(page.getByTestId('last-sma')).toHaveText('7.00');
+  });
+});
+
+test.describe('a cheap coin through the exchange path', () => {
+  const cheap = (n, t0 = T0 / 1000) => Array.from({ length: n }, (_, i) => {
+    const t = (t0 - 60 * (n - 1 - i)) * 1000;
+    const c = 0.00001234 + i * 1e-9;
+    return [t, c.toFixed(8), (c + 2e-9).toFixed(8), (c - 2e-9).toFixed(8), c.toFixed(8), '1000', 0, '0', 0, '0', '0', '0'];
+  });
+
+  test('8-decimal prices are read, drawn and shown with 8 decimals, and live updates keep them', async ({ page }) => {
+    const rows = cheap(60);
+    const mock = await mockBinance(page, () => ({ body: rows }));
+    await goLive(page, mock);
+    const last = rows.at(-1)[4];
+    await expect(page.getByTestId('last-close')).toHaveText(last);
+    expect(await page.evaluate(() => window.__app.candleSeries.options().priceFormat.precision)).toBe(8);
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 0.0000125, h: 0.0000126, l: 0.0000124, c: 0.00001256, v: 3 }));
+    await expect(page.getByTestId('last-close')).toHaveText('0.00001256');
+    await page.getByTestId('indicator').selectOption('bb');
+    const upper = (await page.evaluate(() => window.__app.lineData('upper'))).at(-1).value;
+    await expect(page.getByTestId('last-bb-upper')).toHaveText(upper.toFixed(8));
+  });
+});
+
+test.describe('automatic reconnect and the silence watchdog', () => {
+  const NOW = new Date('2026-11-10T16:34:51Z');
+  const status = (page) => page.getByTestId('status');
+
+  test('failed reconnects are tried again with growing pauses: 1, 2, 4, 8, 16, 30, 30 seconds, and the chart stays', async ({ page, errors }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page, (_, n) => (n === 1 ? {} : { status: 500, body: '' }));
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    let waited = 0;
+    for (const [i, seconds] of [1, 2, 4, 8, 16, 30, 30].entries()) {
+      await expect(status(page)).toHaveText(i === 0
+        ? `Feed disconnected; reconnecting in ${seconds} s (attempt ${i + 1})`
+        : `Feed disconnected: could not reload (HTTP 500); reconnecting in ${seconds} s (attempt ${i + 1})`);
+      await expect(page.getByTestId('bar-count')).toHaveText('50'); // the last data stays on the screen
+      await page.clock.fastForward(seconds * 1000);
+      waited += seconds;
+    }
+    expect(waited).toBe(91);
+    await expect.poll(() => mock.requests.length).toBe(8); // the first load and seven failed reloads
+    expect(mock.sockets).toHaveLength(1);
+    expect(errors.every((e) => /Failed to load resource.*500/.test(e))).toBe(true); // only the 500s we caused
+    errors.length = 0;
+  });
+
+  test('when a reload works again the chart is live again, with the history taken anew', async ({ page, errors }) => {
+    await page.clock.install({ time: NOW });
+    const extended = [...RAW, ...RAW.slice(-1).map((r) => [r[0] + 60000, ...r.slice(1)])];
+    const mock = await mockBinance(page, (_, n) => (n === 1 ? {} : n === 2 ? { status: 500, body: '' } : { body: extended }));
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await page.clock.fastForward(1000);
+    await expect(status(page)).toContainText('could not reload (HTTP 500); reconnecting in 2 s (attempt 2)');
+    await page.clock.fastForward(2000);
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m');
+    await expect(page.getByTestId('bar-count')).toHaveText('51'); // the bar that appeared meanwhile
+    errors.length = 0; // the browser logs the failed request itself
+  });
+
+  test('a connection that stayed healthy for 10 seconds starts again at one second; a flapping one does not', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await page.clock.fastForward(1000);                       // attempt 1
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    mock.sockets[1].ws.close();                                // it dies at once
+    await expect(status(page)).toHaveText('Feed disconnected; reconnecting in 2 s (attempt 2)'); // so the pause grows
+    await page.clock.fastForward(2000);
+    await expect.poll(() => mock.sockets.length).toBe(3);
+    await page.clock.runFor(12_000);                           // this one lives long enough
+    mock.sockets[2].ws.close();
+    await expect(status(page)).toHaveText('Feed disconnected; reconnecting in 1 s (attempt 1)');
+  });
+
+  test('the Disconnect button is final: nothing reconnects by itself afterwards', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.getByTestId('disconnect').click();
+    await expect(status(page)).toHaveText('Feed disconnected');
+    await page.clock.runFor(120_000);
+    expect(mock.sockets).toHaveLength(1);
+    expect(mock.requests).toHaveLength(1);
+    await expect(status(page)).toHaveText('Feed disconnected');
+    await page.getByTestId('reconnect').click(); // the user may still bring it back
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m');
+  });
+
+  test('Disconnect while a reconnect is waiting cancels it', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await expect(status(page)).toContainText('reconnecting in 1 s');
+    await page.getByTestId('disconnect').click();
+    await expect(status(page)).toHaveText('Feed disconnected');
+    await page.clock.runFor(10_000);
+    expect(mock.sockets).toHaveLength(1);
+  });
+
+  test('Disconnect pressed while the automatic reload is on its way is obeyed: the late answer connects nothing', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const mock = await mockBinance(page, async (_, n) => { if (n === 2) await gate; return {}; });
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await page.clock.fastForward(1000);
+    await expect.poll(() => mock.requests.length).toBe(2);   // the reload is on its way
+    await page.getByTestId('disconnect').click();
+    await expect(status(page)).toHaveText('Feed disconnected');
+    release();
+    await page.waitForTimeout(300);
+    await page.clock.runFor(60_000);
+    expect(mock.sockets).toHaveLength(1);                     // the late answer opened nothing
+    await expect(status(page)).toHaveText('Feed disconnected');
+    await page.getByTestId('reconnect').click();              // and the user can still bring it back
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m');
+  });
+
+  test('Disconnect pressed while the first load is still running cancels it as well', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const mock = await mockBinance(page, async () => { await gate; return {}; });
+    await page.goto('/');
+    await page.waitForFunction(() => window.__app);
+    await page.getByTestId('scenario').selectOption('binance');
+    await expect(status(page)).toHaveText('Loading BTCUSDT 1m…');
+    await page.getByTestId('disconnect').click();
+    await expect(status(page)).toHaveText('Feed disconnected');
+    release();
+    await page.waitForTimeout(300);
+    expect(mock.sockets).toHaveLength(0);
+    await expect(status(page)).toHaveText('Feed disconnected');
+  });
+
+  test('after a failed first load Disconnect has nothing to cancel: the message stays', async ({ page, errors }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page, () => ({ status: 500, body: '' }));
+    await open(page);
+    await page.getByTestId('scenario').selectOption('binance');
+    await expect(status(page)).toHaveText('Failed to load BTCUSDT 1m: HTTP 500');
+    await page.getByTestId('disconnect').click();
+    await expect(status(page)).toHaveText('Failed to load BTCUSDT 1m: HTTP 500'); // not "Feed disconnected"
+    await page.clock.runFor(60_000);
+    expect(mock.requests).toHaveLength(1);                                          // and nothing is retried by itself
+    errors.length = 0; // the browser logs the 500 itself
+  });
+
+  test('the Reconnect button does not wait for the timer', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await expect(status(page)).toContainText('reconnecting in 1 s');
+    await page.getByTestId('reconnect').click();
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m');
+    await page.clock.runFor(5000);
+    expect(mock.sockets).toHaveLength(2); // and the timer that was waiting did not fire a second connection
+  });
+
+  test('choosing another symbol or timeframe cancels a waiting reconnect and starts clean', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await expect(status(page)).toContainText('reconnecting in 1 s');
+    await page.getByTestId('symbol').selectOption('ETHUSDT');
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live ETHUSDT 1m');
+    await page.clock.runFor(10_000);
+    expect(mock.sockets).toHaveLength(2);
+    expect(mock.requests.map((u) => u.searchParams.get('symbol'))).toEqual(['BTCUSDT', 'ETHUSDT']);
+  });
+
+  test('changing the data set to a local one cancels everything', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.close();
+    await page.getByTestId('scenario').selectOption('normal');
+    await expect(status(page)).toHaveText('OK');
+    await page.clock.runFor(60_000);
+    expect(mock.sockets).toHaveLength(1);
+    await expect(status(page)).toHaveText('OK');
+  });
+
+  test('a silent connection is noticed after 30 seconds, closed and replaced', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.clock.runFor(25_000);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m'); // not yet
+    await page.clock.runFor(6000);
+    await expect(status(page)).toHaveText(/^Feed disconnected: no data for 3[01] s; reconnecting in 1 s \(attempt 1\)$/);
+    expect(mock.sockets[0].closed).toBe(true);
+    await page.clock.runFor(1000);
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m');
+  });
+
+  test('messages keep the connection alive however long it runs', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    for (let i = 0; i < 9; i++) {
+      mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73490 + i }));
+      await page.clock.runFor(20_000); // 180 s in all
+    }
+    expect(mock.sockets).toHaveLength(1);
+    await expect(status(page)).toHaveText('Live BTCUSDT 1m');
+  });
+
+  test('even garbage counts as a sign of life: the connection works, the data is just bad', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    for (let i = 0; i < 4; i++) { mock.sockets[0].ws.send('not json'); await page.clock.runFor(20_000); }
+    expect(mock.sockets).toHaveLength(1);
+  });
+
+  test('an automatic reconnect does not duplicate bars or lose the indicator', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.getByTestId('indicator').selectOption('ema');
+    mock.sockets[0].ws.close();
+    await page.clock.fastForward(1000);
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(page.getByTestId('bar-count')).toHaveText('50');
+    await expect(page.getByTestId('legend-label')).toHaveText('EMA');
+    expect(await page.evaluate(() => window.__app.state().indicator)).toBe('ema');
   });
 });

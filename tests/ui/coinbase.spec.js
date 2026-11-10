@@ -274,15 +274,29 @@ test.describe('Coinbase live trades', () => {
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
-  test('a gap of whole minutes without trades triggers a fresh history request', async ({ page }) => {
-    const extended = [[T0 + 360, 73488, 73488, 73488, 73488, 0.1], [T0 + 300, 73488, 73488, 73488, 73488, 0.1], [T0 + 240, 73488, 73488, 73488, 73488, 0.1], ...CB_ROWS];
-    const mock = await mockCoinbase(page, (_, n) => (n === 1 ? {} : { body: extended }));
+  test('minutes without trades are just minutes without trades: the next trade opens its bar and nothing is reloaded', async ({ page }) => {
+    const mock = await mockCoinbase(page);
     await goLive(page, mock);
-    tape(mock).send(0, T0 + 360, 73488);
-    await expect.poll(() => mock.requests.length).toBe(2);
-    await expect(page.getByTestId('bar-count')).toHaveText('53');
-    await expect.poll(() => mock.sockets.length).toBe(2);
-    expect(mock.sockets[0].closed).toBe(true);
+    tape(mock).send(0, T0 + 360, 73488); // six minutes later; trade ids are consecutive, so nothing was lost
+    await expect(page.getByTestId('bar-count')).toHaveText('51');
+    expect((await candleData(page)).at(-1).time).toBe(T0 + 360);
+    await page.waitForTimeout(300);
+    expect(mock.requests).toHaveLength(1);   // no new history
+    expect(mock.sockets).toHaveLength(1);    // and no new connection
+    await expect(status(page)).toHaveText('Live BTC-USD 1m');
+  });
+
+  test('a quiet market does not disturb the notes: they are not wiped by a needless reload', async ({ page }) => {
+    const mock = await mockCoinbase(page);
+    await goLive(page, mock);
+    const t = tape(mock);
+    t.send(0, T0 + 10, 73490, 1);
+    t.lose(T0 + 12, 73491, 1);
+    t.send(0, T0 + 14, 73492, 1);
+    await expect(status(page)).toContainText('recovered 1 missed trade(s)');
+    t.send(0, T0 + 600, 73500, 1); // ten quiet minutes, then a trade
+    await expect(page.getByTestId('last-close')).toHaveText('73500.00');
+    await expect(status(page)).toContainText('recovered 1 missed trade(s)'); // still there: nothing was reloaded
   });
 
   test('the update time follows the trades', async ({ page }) => {
@@ -652,11 +666,42 @@ test.describe('Coinbase connection problems', () => {
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
-  test('the server dropping the connection is shown', async ({ page }) => {
+  test('the server dropping the connection is shown, and the app reconnects by itself', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
     const mock = await mockCoinbase(page);
     await goLive(page, mock);
     mock.sockets[0].ws.close();
-    await expect(status(page)).toHaveText('Feed disconnected');
+    await expect(status(page)).toHaveText('Feed disconnected; reconnecting in 1 s (attempt 1)');
+    await page.clock.fastForward(1000);
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(status(page)).toHaveText('Live BTC-USD 1m');
+    expect(mock.requests).toHaveLength(2);
+  });
+
+  test('an error message of the server is not retried by itself: it would only repeat', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
+    const mock = await mockCoinbase(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.send(JSON.stringify({ type: 'error', message: 'Failed to subscribe', reason: 'x' }));
+    await expect(status(page)).toHaveText('Feed disconnected: Failed to subscribe');
+    await page.clock.runFor(120_000);
+    expect(mock.sockets).toHaveLength(1);
+    await expect(status(page)).toHaveText('Feed disconnected: Failed to subscribe');
+  });
+
+  test('heartbeats keep the connection alive; without them it is declared dead after 10 seconds', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
+    const mock = await mockCoinbase(page);
+    await goLive(page, mock);
+    const t = tape(mock);
+    for (let i = 0; i < 6; i++) { t.beat(0); await page.clock.runFor(5000); } // 30 s, a heartbeat every 5 s
+    expect(mock.sockets).toHaveLength(1);
+    await expect(status(page)).toHaveText('Live BTC-USD 1m');
+    await page.clock.runFor(6000);  // 5 s of silence since the last heartbeat were already there: now 11 s
+    await expect(status(page)).toHaveText(/^Feed disconnected: no data for 1[01] s; reconnecting in 1 s \(attempt 1\)$/);
+    expect(mock.sockets[0].closed).toBe(true);
+    await page.clock.runFor(1000);
+    await expect.poll(() => mock.sockets.length).toBe(2);
   });
 
   test('a slow answer for a superseded request never overwrites the newer data', async ({ page }) => {

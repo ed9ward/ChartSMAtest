@@ -51,10 +51,11 @@ export async function fetchHistory({ symbol, interval, limit = 500, signal, fetc
 }
 
 /** Opens the kline stream. onClose fires only when the connection ends without close() being called. */
-export function openStream({ symbol, interval, onKline, onClose, WS = WebSocket }) {
+export function openStream({ symbol, interval, onKline, onClose, onActivity, WS = WebSocket }) {
   const ws = new WS(`${WS_URL}/${symbol.toLowerCase()}@kline_${interval}`);
   let closedByUs = false;
   ws.onmessage = (event) => {
+    onActivity?.(); // any message at all shows that the connection is alive
     const parsed = parseKlineMessage(event.data, { symbol, interval });
     if (parsed) onKline(parsed);
   };
