@@ -9,13 +9,13 @@ const EXCHANGES = ['tests/ui/binance.spec.js', 'tests/ui/coinbase.spec.js'];
 
 export const MUTANTS = [
   // --- SMA -----------------------------------------------------------------
-  { id: 'sma-window-off-by-one', file: 'src/sma.js', from: 'for (let i = end - period + 1; i <= end && valid; i++)', to: 'for (let i = end - period; i < end && valid; i++)' },
-  { id: 'sma-first-point-late', file: 'src/sma.js', from: 'for (let end = period - 1; end < candles.length; end++)', to: 'for (let end = period; end < candles.length; end++)' },
+  { id: 'sma-window-off-by-one', file: 'src/sma.js', from: 'if (i >= period) {', to: 'if (i > period) {' },
+  { id: 'sma-first-point-late', file: 'src/sma.js', from: 'if (i < period - 1 || invalid > 0) continue;', to: 'if (i < period || invalid > 0) continue;' },
   { id: 'sma-hl2-wrong', file: 'src/sma.js', from: 'return (candle.high + candle.low) / 2;', to: 'return (candle.high + candle.low) / 3;' },
   { id: 'sma-ohlc4-without-open', file: 'src/sma.js', from: '(candle.open + candle.high + candle.low + candle.close) / 4', to: '(candle.high + candle.low + candle.close) / 3' },
   { id: 'sma-volume-as-close', file: 'src/sma.js', from: "    case 'volume':\n      return candle[source];", to: "      return candle[source];\n    case 'volume':\n      return candle.close;" },
-  { id: 'sma-nan-accepted', file: 'src/sma.js', from: "if (typeof v !== 'number' || !Number.isFinite(v)) valid = false;", to: 'if (false) valid = false;' },
-  { id: 'sma-overflow-accepted', file: 'src/sma.js', from: 'if (valid && Number.isFinite(value)) out.push', to: 'if (valid) out.push' },
+  { id: 'sma-nan-accepted', file: 'src/sma.js', from: "typeof value === 'number' && Number.isFinite(value) ? value : null", to: "typeof value === 'number' ? value : 0" },
+  { id: 'sma-overflow-accepted', file: 'src/sma.js', from: 'if (Number.isFinite(average)) out.push', to: 'out.push' },
   { id: 'sma-period-not-validated', file: 'src/sma.js', from: 'if (!Number.isInteger(period) || period < 1) {', to: 'if (false) {' },
 
   // --- EMA, Bollinger, RSI ---------------------------------------------------
