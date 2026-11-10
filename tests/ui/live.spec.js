@@ -58,7 +58,8 @@ test.describe('feed connection lost and restored', () => {
 
     await page.getByTestId('reconnect').click();
     await expect(page.getByTestId('status')).toHaveText('OK');
-    await expect.poll(async () => (await snapshot(page)).ticks).toBeGreaterThan(before.ticks + 3); // backfill + live
+    // ~700 ms offline = at least 3 missed ticks must arrive at once as history, not trickle in live
+    expect((await snapshot(page)).ticks).toBeGreaterThanOrEqual(before.ticks + 3);
     await page.getByTestId('stop').click();
 
     const after = await snapshot(page);
