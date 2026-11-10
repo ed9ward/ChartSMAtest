@@ -27,6 +27,17 @@
       <select id="scenario" data-testid="scenario">
         <option>normal</option><option>long</option><option>negative</option><option>huge</option><option>overflow</option>
         <option>nan</option><option>duplicates</option><option>unordered</option><option>empty</option>
+        <option value="binance">Binance live</option>
+      </select>
+    </label>
+    <label>Symbol
+      <select id="symbol" data-testid="symbol">
+        <option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>BNBUSDT</option>
+      </select>
+    </label>
+    <label>Timeframe
+      <select id="interval" data-testid="interval">
+        <option>1m</option><option>5m</option><option>15m</option><option>1h</option><option>1d</option>
       </select>
     </label>
     <button id="start" data-testid="start">Start stream</button>

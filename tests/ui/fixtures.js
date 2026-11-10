@@ -33,7 +33,7 @@ export function probeSmaLine(page) {
     const ys = [];
     for (let y = 0; y < canvas.height; y++) {
       const r = px[y * 4], g = px[y * 4 + 1], b = px[y * 4 + 2];
-      if (r > 220 && g > 120 && g < 190 && b < 80) ys.push(y);
+      if (r > 220 && g > 120 && g < 215 && b < 140 && r - b > 120) ys.push(y); // orange, also when anti-aliased
     }
     return { expectedY, ys, height: canvas.height };
   });
