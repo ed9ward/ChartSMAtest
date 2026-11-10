@@ -645,7 +645,7 @@ test.describe('lost and repeated live messages', () => {
 });
 
 test.describe('impossible candles', () => {
-  const MSG = 'dropped 3 inconsistent candle(s) (impossible high/low or negative volume)';
+  const MSG = 'dropped 3 inconsistent candle(s) (impossible high/low or negative volume); source omitted 3 candle interval(s); indicators use returned candles only';
 
   test('history rows with impossible OHLC or a negative volume are dropped and the status says so', async ({ page }) => {
     const rows = RAW.map((r) => [...r]);
