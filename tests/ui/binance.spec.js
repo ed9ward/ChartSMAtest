@@ -22,6 +22,24 @@ const extend = (rows, n) => [...rows, ...Array.from({ length: n }, (_, j) => {
 })];
 
 // Two daily bars for the "change per day" figure: yesterday closed at 75800.
+const intervalMs = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '1d': 86400000 };
+const dailyChartRows = () => Array.from({ length: 50 }, (_, i) => {
+  const time = Date.UTC(2026, 10, 10) - (49 - i) * 86400000;
+  const close = i === 48 ? 73484.01 : i === 49 ? 73488 : 73470 + i * 0.2;
+  return [time, close - 0.2, close + 1, close - 1, close, '1', 0, '0', 0, '0', '0', '0'];
+});
+const historyRows = (interval) => {
+  if (interval === '1m') return RAW;
+  if (interval === '1d') return dailyChartRows();
+  const step = intervalMs[interval] ?? 60000;
+  const newest = Math.floor(T0 / step) * step;
+  return Array.from({ length: 50 }, (_, i) => {
+    const time = newest - (49 - i) * step;
+    const close = i === 49 ? 73488 : 73470 + i * 0.2;
+    return [time, close - 0.2, close + 1, close - 1, close, '1', 0, '0', 0, '0', '0', '0'];
+  });
+};
+
 const dailyRows = (prevClose = 75800) => [
   [Date.UTC(2026, 10, 9), '74000', '76000', '73000', String(prevClose), '1000', 0, '0', 0, '0', '0', '0'],
   [Date.UTC(2026, 10, 10), String(prevClose), '76500', '72900', '73488', '900', 0, '0', 0, '0', '0', '0'],
@@ -43,7 +61,7 @@ async function mockBinance(page, respond, { daily } = {}) {
       status: out.status ?? 200,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: typeof out.body === 'string' ? out.body : JSON.stringify(out.body ?? RAW),
+      body: typeof out.body === 'string' ? out.body : JSON.stringify(out.body ?? historyRows(url.searchParams.get('interval'))),
     });
   });
   await page.routeWebSocket(/stream\.binance\.com/, (ws) => {
@@ -316,7 +334,7 @@ test.describe('connection problems', () => {
     await open(page);
     await page.getByTestId('scenario').selectOption('binance');
     await expect(page.getByTestId('bar-count')).toHaveText('3');
-    await expect(page.getByTestId('status')).toContainText('dropped 1 invalid');
+    await expect(page.getByTestId('status')).toContainText('dropped 3 invalid');
   });
 
   test('after a failure the app recovers when the request works again', async ({ page, errors }) => {
@@ -488,7 +506,7 @@ test.describe('update time and change per day', () => {
     // the mock returns the same 50 rows as "daily" bars: previous close 73484.01, last close 73488
     await expect(page.getByTestId('day-change')).toHaveText('+0.01%');
     expect(mock.dailyRequests).toHaveLength(1); // only from the first (1m) load
-    mock.sockets.at(-1).ws.send(klineMsg({ t: T0, o: 73484, h: 74000, l: 73000, c: 74000, i: '1d' }));
+    mock.sockets.at(-1).ws.send(klineMsg({ t: Date.UTC(2026, 10, 10), o: 73484, h: 74000, l: 73000, c: 74000, i: '1d' }));
     await expect(page.getByTestId('day-change')).toHaveText('+0.70%'); // (74000 - 73484.01) / 73484.01
   });
 

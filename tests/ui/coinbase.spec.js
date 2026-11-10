@@ -12,6 +12,17 @@ const T0 = CANDLES.at(-1).time; // 2026-11-10T16:17:00Z, the newest bar
 const iso = (seconds) => new Date(seconds * 1000).toISOString();
 
 // Two daily bars, newest first: yesterday closed at 75800.
+const historyRowsForGranularity = (granularity) => {
+  if (granularity === 60) return CB_ROWS;
+  const newest = Math.floor(T0 / granularity) * granularity;
+  return Array.from({ length: 50 }, (_, i) => {
+    const offset = 49 - i;
+    const time = newest - offset * granularity;
+    const close = offset === 0 ? 73488 : offset === 1 ? 73484.01 : 73470 + offset * 0.2;
+    return [time, close - 1, close + 1, close - 0.2, close, 1];
+  });
+};
+
 const dailyRows = (prevClose = 75800) => [
   [Date.UTC(2026, 10, 10) / 1000, 72900, 76500, prevClose, 73488, 900],
   [Date.UTC(2026, 10, 9) / 1000, 73000, 76000, 74000, prevClose, 1000],
@@ -42,7 +53,7 @@ async function mockCoinbase(page, respond, { daily, trades } = {}) {
       status: out.status ?? 200,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: typeof out.body === 'string' ? out.body : JSON.stringify(out.body ?? CB_ROWS),
+      body: typeof out.body === 'string' ? out.body : JSON.stringify(out.body ?? historyRowsForGranularity(Number(url.searchParams.get('granularity')))),
     });
   });
   await page.route('https://api.exchange.coinbase.com/products/*/trades*', async (route) => {
@@ -145,7 +156,8 @@ test.describe('Coinbase history', () => {
   test('an empty history: the first trade creates the first bar', async ({ page }) => {
     const mock = await mockCoinbase(page, () => ({ body: [] }));
     await goLive(page, mock);
-    await expect(page.getByTestId('bar-count')).toHaveText('0');
+    await expect(page.getByTestId('bar-count')).toHaveText('1'); // unseeded last_match is the first trade
+    await expect(page.getByTestId('last-close')).toHaveText('73488.00');
     tape(mock).send(0, T0 + 30, 100, 2);
     await expect(page.getByTestId('bar-count')).toHaveText('1');
     await expect(page.getByTestId('last-close')).toHaveText('100.00');

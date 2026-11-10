@@ -443,6 +443,7 @@ function onLiveKline(gen, candle, interval, correction = false, closed = false) 
   }
   const last = lastCandle();
   let trimmed = false;
+  let gapAdded = false;
   if (!last || candle.time === last.time) {
     if (last) state.candles[state.candles.length - 1] = candle;
     else trimmed = appendBoundedCandle(state.candles, candle, MAX_LIVE_CANDLES);
@@ -451,7 +452,9 @@ function onLiveKline(gen, candle, interval, correction = false, closed = false) 
     return;
   } else if (candle.time > last.time) {
     if (!live.provider.reloadOnBarGap) {
-      live.gaps += Math.max(0, Math.round((candle.time - last.time) / INTERVAL_SECONDS[interval]) - 1);
+      const missing = Math.max(0, Math.round((candle.time - last.time) / INTERVAL_SECONDS[interval]) - 1);
+      live.gaps += missing;
+      gapAdded = missing > 0;
     }
     trimmed = appendBoundedCandle(state.candles, candle, MAX_LIVE_CANDLES);
   } else {
@@ -461,6 +464,7 @@ function onLiveKline(gen, candle, interval, correction = false, closed = false) 
     live.closedThrough = Math.max(live.closedThrough ?? -Infinity, candle.time);
   }
   paintLast(candle, trimmed);
+  if (gapAdded) showStatus();
 }
 
 // --- wiring ----------------------------------------------------------------
