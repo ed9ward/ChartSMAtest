@@ -55,11 +55,27 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
 // Numbers arrive as numbers or as numeric strings; null, empty strings and objects are not numbers (Number(null) would be 0).
 const toNumber = (x) => parseFiniteNumber(x) ?? NaN;
 
+const ISO_TIMESTAMP = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d+)?(?:Z|[+-](\\d{2}):(\\d{2}))$/i;
+
+const parseTradeTimestamp = (value) => {
+  if (typeof value !== 'string') return NaN;
+  const parts = ISO_TIMESTAMP.exec(value);
+  if (!parts) return NaN;
+  const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = parts;
+  const y = Number(year), m = Number(month), d = Number(day);
+  const daysInMonth = [31, (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (m < 1 || m > 12 || d < 1 || d > daysInMonth[m - 1]
+    || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59
+    || (offsetHour !== undefined && (Number(offsetHour) > 23 || Number(offsetMinute) > 59))) return NaN;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) ? milliseconds / 1000 : NaN;
+};
+
 const toTrade = (tradeId, price, size, time, last = false) => {
   tradeId = toNumber(tradeId);
   price = toNumber(price);
   size = toNumber(size);
-  time = typeof time === 'string' ? Date.parse(time) / 1000 : NaN;
+  time = parseTradeTimestamp(time);
   if (!Number.isSafeInteger(tradeId) || tradeId < 0 || !Number.isFinite(price) || price <= 0) return null;
   if (!Number.isFinite(size) || size < 0 || !Number.isFinite(time)) return null;
   return { tradeId, price, size, time, last };
