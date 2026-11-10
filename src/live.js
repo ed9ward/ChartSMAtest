@@ -55,7 +55,7 @@ export async function fetchHistory({ symbol, interval, limit = 500, signal, fetc
     if (candle) candles.push(candle);
     else invalidCount++;
   }
-  candles.invalidCount = invalidCount;
+  if (invalidCount) candles.invalidCount = invalidCount;
   candles.sort((a, b) => a.time - b.time);
   return candles;
 }

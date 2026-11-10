@@ -125,7 +125,7 @@ describe('openStream', () => {
     constructor(url) { this.url = url; this.closed = false; FakeWS.last = this; }
     close() { this.closed = true; }
   }
-  const kline = (over = {}) => JSON.stringify({ e: 'kline', s: 'BTCUSDT', k: { t: 1000, s: 'BTCUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: false, ...over } });
+  const kline = (over = {}) => JSON.stringify({ e: 'kline', s: 'BTCUSDT', k: { t: 60000, s: 'BTCUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: false, ...over } });
 
   it('connects to the lower-cased stream name', () => {
     openStream({ symbol: 'BTCUSDT', interval: '1h', onKline() {}, WS: FakeWS });

@@ -252,7 +252,7 @@ describe('stream: building candles from trades', () => {
     const t = setup({ seed: { time: BASE - 60, open: 90, high: 120, low: 80, close: 100, volume: 10 } });
     t.send(lastMatch(0));
     t.send(match(1, 5, 150));
-    expect(t.candles[0]).toEqual({ time: BASE, open: 100, high: 150, low: 100, close: 150, volume: 2 });
+    expect(t.candles.at(-1)).toEqual({ time: BASE, open: 100, high: 150, low: 100, close: 150, volume: 2 });
   });
   it('a trade older than the candle under way is ignored (it belongs to a closed candle)', () => {
     const t = setup({ seed: { time: BASE + 60, open: 90, high: 120, low: 80, close: 100, volume: 10 } });

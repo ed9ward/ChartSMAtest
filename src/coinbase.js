@@ -47,7 +47,7 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
   }
   candles.sort((a, b) => a.time - b.time);
   const result = candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
-  result.invalidCount = invalidCount;
+  if (invalidCount) result.invalidCount = invalidCount;
   return result;
 }
 

@@ -381,7 +381,7 @@ function dataGroup(ctx) {
 
 function binanceGroup(ctx) {
   const c = (name, run) => ({ name, run });
-  const msg = (over = {}) => ({ e: 'kline', s: 'BTCUSDT', k: { t: 1000, s: 'BTCUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: false, ...over } });
+  const msg = (over = {}) => ({ e: 'kline', s: 'BTCUSDT', k: { t: 60000, s: 'BTCUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: false, ...over } });
   return {
     id: 'binance',
     title: 'Binance data format',
@@ -399,7 +399,7 @@ function binanceGroup(ctx) {
         });
       }),
       c('a WebSocket kline message is parsed', () => equal(parseKlineMessage(msg(), { symbol: 'BTCUSDT', interval: '1m' }),
-        { candle: { time: 1, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 }, closed: false })),
+        { candle: { time: 60, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 }, closed: false })),
       c('change per day: hand-calculated values and formatting', () => {
         close(dayChangePercent(73488, 75800), -3.0501319, 6);
         equal(dayChangePercent(100, 0), null);
