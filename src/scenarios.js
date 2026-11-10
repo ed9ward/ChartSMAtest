@@ -23,5 +23,12 @@ export const SCENARIOS = {
     if (i === 55) return { ...c, open: 100, high: 100, low: 100, close: 100 };
     return c;
   }),
+  // nothing moves at all: every price equal, the case where indicator conventions differ (RSI: TradingView 100, TA-Lib 50)
+  flat: () => base().map((c) => ({ ...c, open: 100, high: 100, low: 100, close: 100, volume: 10 })),
+  // a rising zigzag for 30 bars, then the price stops dead
+  stalled: () => base().map((c, i) => {
+    const price = 100 + Math.min(i, 30) + (i < 30 && i % 2 === 1 ? -2 : 0);
+    return { ...c, open: price, high: price, low: price, close: price, volume: 10 };
+  }),
   empty: () => [],
 };

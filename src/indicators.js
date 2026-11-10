@@ -90,8 +90,16 @@ export function computeBB(candles, period, mult = 2, source = 'close') {
 }
 
 /**
- * RSI with Wilder smoothing. The first value needs `period` price changes, so it appears at bar index `period`.
- * No losses -> 100, no gains -> 0 (TradingView's rule). A bad value ends the chain.
+ * RSI with Wilder smoothing (an RMA that starts from the SMA of the first `period` changes). The first value needs
+ * `period` price changes, so it appears at bar index `period`. A bad value ends the chain.
+ *
+ * Only one situation is a matter of convention: no movement at all (both averages are exactly zero, e.g. a flat
+ * price). The formula 100 - 100 / (1 + up / down) is then 0 / 0, and platforms choose differently:
+ *   - TradingView's published RSI code: `down == 0 ? 100 : up == 0 ? 0 : ...`  ->  100. This is what is used here.
+ *   - TA-Lib: 50 (neutral).
+ * Everywhere else the two agree. After a move that stops, both averages decay by the same factor on every bar, so the
+ * ratio, and the RSI, stays at its last value until the averages underflow to zero (many hundreds of bars), after
+ * which the flat convention applies. Tests cover each of these cases against independent values.
  */
 export function computeRSI(candles, period, source = 'close') {
   assertPeriod(period);

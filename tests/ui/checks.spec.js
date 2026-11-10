@@ -8,6 +8,8 @@ const groups = buildGroups({ realRows: async () => rows, realCandles: async () =
 const ALL = groups.flatMap((g) => g.checks).length;
 const NO_UI = groups.flatMap((g) => g.checks).filter((c) => !c.ui).length;
 const GROUP_IDS = groups.map((g) => g.id);
+// checks that read the reference file: the library comparisons and the RSI edge cases
+const NEED_REFERENCE_FILE = groups.flatMap((g) => g.checks).filter((c) => !c.ui && /equals the reference library|edge cases/.test(c.name)).length;
 
 const number = async (locator) => Number((await locator.textContent()).trim());
 const state = (page) => page.getByTestId('state');
@@ -75,7 +77,8 @@ test.describe('comparison with TA-Lib', () => {
     await page.goto('/checks.html');
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
-    await expect(page.getByTestId('verdict')).toHaveText(/10 of \d+ checks failed/);
+    await expect(page.getByTestId('verdict')).toHaveText(new RegExp(`^${NEED_REFERENCE_FILE} of \\d+ checks failed`));
+    expect(NEED_REFERENCE_FILE).toBe(12); // 10 library comparisons + 2 RSI edge-case checks
     await expect(page.getByTestId('details-talib').locator('li.fail').first()).toContainText('HTTP 404');
     expect(errors).toEqual(['Failed to load resource: the server responded with a status of 404 (Not Found)']);
     errors.length = 0;

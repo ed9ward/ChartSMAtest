@@ -21,7 +21,7 @@ const REFERENCE = {
   sma: (c, p, s) => ({ sma: refSMA(c, p.period, s) }),
   ema: (c, p, s) => ({ ema: refEMA(c, p.period, s, p.start) }),
   bb: (c, p, s) => refBB(c, p.period, p.mult, s),
-  rsi: (c, p, s) => ({ rsi: refRSI(c, p.period, s) }),
+  rsi: (c, p, s) => ({ rsi: refRSI(c, p.period, s, { flat: 100 }) }), // generated data can have equal neighbours at period 1
 };
 
 // Indicator output must equal the independent reference on every line.
@@ -163,6 +163,46 @@ function logicChecks(kind, ctx) {
       matchReference(kind, DATA.map((c) => ({ ...c, open: c.open * 1e9, high: c.high * 1e9, low: c.low * 1e9, close: c.close * 1e9 })), { ...defaults, mult: 2 }, 'close');
     },
   });
+  if (kind === 'rsi') {
+    // RSI where nothing moved is a convention (TradingView 100, TA-Lib 50): compare with values from outside the app
+    const ours = (e) => {
+      const candles = e.closes.map((x, i) => ({ time: i + 1, open: x, high: x, low: x, close: x, volume: 1 }));
+      const out = Array(candles.length).fill(null);
+      for (const p of computeIndicator('rsi', candles, { period: e.period }).rsi) out[p.time - 1] = p.value;
+      return out;
+    };
+    const near = (a, b, tol) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(b));
+    checks.push({
+      name: 'edge cases (flat price, only rise, only fall, a stop after movement, a long quiet) equal TradingView\'s published rule',
+      run: async () => {
+        const { rsiEdge } = await ctx.talibReference();
+        assert(rsiEdge.length >= 15, 'the edge cases are missing from the reference file');
+        for (const e of rsiEdge) {
+          const got = ours(e);
+          e.tradingview.forEach((want, i) => {
+            assert((want === null) === (got[i] === null), `${e.title}: bar ${i} has a value in only one of them`);
+            if (want !== null) assert(near(got[i], want, 1e-9), `${e.title}: bar ${i} is ${got[i]}, expected ${want}`);
+          });
+        }
+      },
+    });
+    checks.push({
+      name: 'edge cases equal TA-Lib except where nothing moved at all (100 against 50)',
+      run: async () => {
+        const { rsiEdge } = await ctx.talibReference();
+        for (const e of rsiEdge.filter((x) => x.talib)) {
+          const got = ours(e);
+          const differing = [];
+          e.talib.forEach((want, i) => {
+            if (want === null) return assert(got[i] === null, `${e.title}: bar ${i} should have no value`);
+            if (!near(got[i], want, 1e-8)) differing.push(i);
+          });
+          equal(differing, e.flatBars, `${e.title}: the bars that differ from TA-Lib`);
+          for (const i of differing) assert(got[i] === 100 && e.talib[i] === 50, `${e.title}: bar ${i} is ${got[i]} against ${e.talib[i]}`);
+        }
+      },
+    });
+  }
   checks.push({
     name: 'real BTCUSDT data: last-bar values match numbers calculated outside JavaScript',
     run: async () => GOLDEN[kind](await ctx.realCandles()),

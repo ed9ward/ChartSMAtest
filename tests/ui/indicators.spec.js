@@ -12,7 +12,7 @@ const KINDS = {
   sma: { label: 'SMA', period: 20, keys: ['sma'], panes: 1, ref: (c, p, s) => ({ sma: refSMA(c, p.period, s) }) },
   ema: { label: 'EMA', period: 20, keys: ['ema'], panes: 1, ref: (c, p, s) => ({ ema: refEMA(c, p.period, s, p.start) }) },
   bb: { label: 'BB', period: 20, keys: ['basis', 'upper', 'lower'], panes: 1, ref: (c, p, s) => refBB(c, p.period, p.mult ?? 2, s) },
-  rsi: { label: 'RSI', period: 14, keys: ['rsi'], panes: 2, ref: (c, p, s) => ({ rsi: refRSI(c, p.period, s) }) },
+  rsi: { label: 'RSI', period: 14, keys: ['rsi'], panes: 2, ref: (c, p, s) => ({ rsi: refRSI(c, p.period, s, { flat: 100 }) }) },
 };
 const PRIMARY = { sma: 'sma', ema: 'ema', bb: 'basis', rsi: 'rsi' };
 
@@ -355,6 +355,68 @@ test.describe('switching indicators', () => {
     await page.getByTestId('scenario').selectOption('long');
     await expectLines(page, 'ema', SCENARIOS.long(), { period: 20 }, 'close');
     expect((await snapshot(page)).indicator).toBe('ema');
+  });
+});
+
+test.describe('flat and stalled markets', () => {
+  test('a flat market: every indicator gives the price, RSI is 100 (the TradingView convention), nothing breaks', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('flat');
+    await expect(page.getByTestId('status')).toHaveText('OK');
+    for (const [kind, keys] of [['sma', ['sma']], ['ema', ['ema']], ['bb', ['basis', 'upper', 'lower']], ['rsi', ['rsi']]]) {
+      await pick(page, kind);
+      for (const key of keys) {
+        const data = await lineData(page, key);
+        expect(data.length, `${kind}/${key}`).toBeGreaterThan(0);
+        expect(data.every((p) => p.value === 100), `${kind}/${key}`).toBe(true);
+      }
+    }
+    await expect(page.getByTestId('last-sma')).toHaveText('100.00');
+  });
+
+  test('a flat market with the SMA start of the EMA, and with a short and a long RSI period', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('flat');
+    await pick(page, 'ema');
+    await page.getByTestId('ema-start').selectOption('sma');
+    expect((await lineData(page, 'ema')).every((p) => p.value === 100)).toBe(true);
+    for (const period of [1, 2, 14, 59]) {
+      await pick(page, 'rsi', { period });
+      const data = await lineData(page, 'rsi');
+      expect(data, `period ${period}`).toHaveLength(60 - period);
+      expect(data.every((p) => p.value === 100), `period ${period}`).toBe(true);
+    }
+  });
+
+  test('a stalled market: the RSI stays at its last value after the price stops, and matches the reference', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('stalled');
+    await pick(page, 'rsi');
+    const stalled = sanitizeCandles(SCENARIOS.stalled()).candles;
+    expectSeriesClose(await lineData(page, 'rsi'), refRSI(stalled, 14, 'close')); // no convention needed: something moved
+    const data = await lineData(page, 'rsi');
+    const stopAt = stalled[30].time; // the last bar with a move
+    const atStop = data.find((p) => p.time === stopAt).value;
+    const after = data.filter((p) => p.time > stopAt);
+    expect(after.length).toBeGreaterThan(20);
+    for (const p of after) expect(p.value).toBeCloseTo(atStop, 9);
+    expect(atStop).toBeGreaterThan(50);
+    expect(atStop).toBeLessThan(100);
+    await expect(page.getByTestId('last-sma')).toHaveText(atStop.toFixed(2));
+  });
+
+  test('a stalled market: the other indicators settle on the final price', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('stalled');
+    const price = sanitizeCandles(SCENARIOS.stalled()).candles.at(-1).close;
+    await pick(page, 'bb', { period: 5 });
+    const [upper, basis, lower] = ['upper', 'basis', 'lower'].map((k) => lineData(page, k));
+    const last = async (p) => (await p).at(-1).value;
+    expect(await last(basis)).toBe(price);
+    expect(await last(upper)).toBe(price); // no spread any more
+    expect(await last(lower)).toBe(price);
+    await pick(page, 'sma', { period: 5 });
+    expect((await lineData(page, 'sma')).at(-1).value).toBe(price);
   });
 });
 

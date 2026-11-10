@@ -60,7 +60,9 @@ export function refBB(candles, period, mult, source) {
 }
 
 // Wilder RSI: averages updated as avg - avg/period + x/period; RSI = 100 * up / (up + down).
-export function refRSI(candles, period, source) {
+// With no movement at all (both averages zero) that is 0 / 0: the formula does not define a value, platforms choose one
+// (TradingView 100, TA-Lib 50). So the reference refuses to guess: the caller has to state the convention as { flat }.
+export function refRSI(candles, period, source, { flat } = {}) {
   const xs = xsOf(candles, source);
   const diffs = xs.slice(1).map((x, i) => x - xs[i]);
   if (diffs.length < period) return [];
@@ -68,7 +70,13 @@ export function refRSI(candles, period, source) {
   const down = diffs.map((d) => (d < 0 ? -d : 0));
   let avgUp = mean(up.slice(0, period));
   let avgDown = mean(down.slice(0, period));
-  const rsi = () => (avgDown === 0 ? 100 : (100 * avgUp) / (avgUp + avgDown));
+  const rsi = () => {
+    if (avgUp === 0 && avgDown === 0) {
+      if (flat === undefined) throw new Error('RSI is undefined when nothing moved: pass the convention to test as { flat }');
+      return flat;
+    }
+    return (100 * avgUp) / (avgUp + avgDown);
+  };
   const out = [{ time: candles[period].time, value: rsi() }];
   for (let j = period; j < diffs.length; j++) {
     avgUp += (up[j] - avgUp) / period;

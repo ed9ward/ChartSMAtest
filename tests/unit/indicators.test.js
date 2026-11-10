@@ -190,7 +190,7 @@ describe('RSI', () => {
   for (const source of SOURCES) {
     for (const period of [1, 2, 5, 14, 20, 50, 299]) {
       it(`${source}, period ${period} matches the reference`, () => {
-        expectSeriesClose(computeRSI(candles, period, source), refRSI(candles, period, source));
+        expectSeriesClose(computeRSI(candles, period, source), refRSI(candles, period, source, { flat: 100 }));
       });
     }
   }
@@ -201,10 +201,9 @@ describe('RSI', () => {
     expect(r[0].value).toBeCloseTo(200 / 3, 10);
     expect(r[1].value).toBeCloseTo(600 / 7, 10);
   });
-  it('only gains -> 100, only losses -> 0, flat -> 100 (TradingView rule)', () => {
+  it('only gains -> 100, only losses -> 0 (every platform agrees); a flat price is a convention: see rsi-edge.test.js', () => {
     expect(values(computeRSI(closes([1, 2, 3, 4, 5, 6]), 3))).toEqual([100, 100, 100]);
     expect(values(computeRSI(closes([6, 5, 4, 3, 2, 1]), 3))).toEqual([0, 0, 0]);
-    expect(values(computeRSI(closes([5, 5, 5, 5, 5]), 3))).toEqual([100, 100]);
   });
   it('period 1 jumps between 100 and 0 with the direction of the last change', () => {
     expect(values(computeRSI(closes([1, 3, 2, 2, 5]), 1))).toEqual([100, 0, 100, 100]);
@@ -231,9 +230,9 @@ describe('RSI', () => {
   });
   it('negative prices and huge prices work', () => {
     const neg = candles.map((c) => ({ ...c, close: c.close - 500 }));
-    expectSeriesClose(computeRSI(neg, 14), refRSI(neg, 14, 'close'));
+    expectSeriesClose(computeRSI(neg, 14), refRSI(neg, 14, 'close', { flat: 100 }));
     const big = candles.map((c) => ({ ...c, close: c.close * 1e12 }));
-    expectSeriesClose(computeRSI(big, 14), refRSI(big, 14, 'close'));
+    expectSeriesClose(computeRSI(big, 14), refRSI(big, 14, 'close', { flat: 100 }));
   });
   it('overflow of a price change gives a gap, not NaN', () => {
     const r = computeRSI(closes([-Number.MAX_VALUE, Number.MAX_VALUE, -Number.MAX_VALUE, Number.MAX_VALUE]), 2);

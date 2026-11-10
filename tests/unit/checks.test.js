@@ -33,6 +33,29 @@ describe('the in-page check suite (everything that does not need a browser)', ()
     expect(failedByGroup.data + failedByGroup.binance).toBe(0);
   });
 
+  it('the RSI edge-case checks really compare: a changed expected value or a changed convention makes them fail', async () => {
+    const tamper = (mutate) => {
+      const copy = JSON.parse(JSON.stringify(talib));
+      mutate(copy.rsiEdge);
+      return runChecks(buildGroups({ ...ctx, talibReference: async () => copy }), { include: (c) => !c.ui && /edge cases/.test(c.name) });
+    };
+    const clean = await runChecks(buildGroups(ctx), { include: (c) => !c.ui && /edge cases/.test(c.name) });
+    expect(clean.total).toBe(2);
+    expect(clean.failed).toBe(0);
+
+    // TradingView's value for one bar changed
+    const a = await tamper((edge) => { const e = edge.find((x) => x.title === 'only up'); e.tradingview[e.tradingview.findIndex((v) => v !== null)] = 99; });
+    expect(a.results.map((r) => r.ok)).toEqual([false, true]);
+
+    // TA-Lib says 100 instead of 50 on a flat bar: then ours would "equal" TA-Lib there, which is not the known difference
+    const b = await tamper((edge) => { const e = edge.find((x) => x.title === 'flat'); e.talib[e.talib.findIndex((v) => v !== null)] = 100; });
+    expect(b.results.map((r) => r.ok)).toEqual([true, false]);
+
+    // an unexpected extra difference from TA-Lib on a bar that is not a flat one
+    const c = await tamper((edge) => { const e = edge.find((x) => x.title === 'zigzag up, then flat'); e.talib[e.talib.length - 1] += 1; });
+    expect(c.results.map((r) => r.ok)).toEqual([true, false]);
+  });
+
   it('the runner reports a failing check with its message and keeps going', async () => {
     const groups = [{ id: 'x', title: 'X', checks: [
       { name: 'bad', run: () => { throw new Error('boom'); } },

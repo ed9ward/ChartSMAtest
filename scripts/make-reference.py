@@ -108,7 +108,61 @@ datasets = [
     build("real50", "50 real BTCUSDT 1m bars from Binance", real_rows(), SOURCES, [5, 14, 20]),
     build("walk300", "300 random-walk bars (generated independently of the app)", random_walk_rows(), ["close", "hlc3", "volume"], [14, 50, 200]),
 ]
-doc = {"generatedWith": {"TA-Lib": talib.__version__, "pandas": pd.__version__, "numpy": np.__version__}, "datasets": datasets}
+# --- RSI edge cases: what each convention says when there is no movement at all -----------------------------------
+# TradingView's published RSI code:  up = rma(max(change, 0), n); down = rma(-min(change, 0), n)
+#                                    rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - 100 / (1 + up / down)
+# (rma seeds with the SMA of the first n values; IEEE doubles like everywhere else). TA-Lib returns 50 for "no movement".
+def tradingview_rsi(x, p):
+    n = len(x)
+    out, flat_bars = [None] * n, []
+    if n <= p:
+        return out, flat_bars
+    ups = [0.0] + [max(x[i] - x[i - 1], 0.0) for i in range(1, n)]
+    downs = [0.0] + [max(x[i - 1] - x[i], 0.0) for i in range(1, n)]
+    up, down = sum(ups[1:p + 1]) / p, sum(downs[1:p + 1]) / p
+    alpha = 1.0 / p
+
+    def value(i):
+        if up == 0.0 and down == 0.0:
+            flat_bars.append(i)
+        out[i] = 100.0 if down == 0.0 else (0.0 if up == 0.0 else 100.0 - 100.0 / (1.0 + up / down))
+
+    value(p)
+    for i in range(p + 1, n):
+        up = alpha * ups[i] + (1.0 - alpha) * up
+        down = alpha * downs[i] + (1.0 - alpha) * down
+        value(i)
+    return out, flat_bars
+
+
+def rsi_edge_scenarios():
+    rise, fall = [float(i) for i in range(1, 13)], [float(i) for i in range(12, 0, -1)]
+    return [
+        ("flat", [5.0] * 12, 3),
+        ("flat, period 14", [5.0] * 40, 14),
+        ("only up", rise, 3),
+        ("only down", fall, 3),
+        ("only up, period 14", [float(i) for i in range(1, 41)], 14),
+        ("only down, period 14", [float(i) for i in range(40, 0, -1)], 14),
+        ("up, then flat", [float(i) for i in range(1, 9)] + [8.0] * 10, 3),
+        ("down, then flat", [float(i) for i in range(8, 0, -1)] + [1.0] * 10, 3),
+        ("zigzag up, then flat", [1.0, 3.0, 2.0, 4.0, 3.0, 5.0, 4.0, 6.0] + [6.0] * 12, 3),
+        ("zigzag down, then flat", [6.0, 4.0, 5.0, 3.0, 4.0, 2.0, 3.0, 1.0] + [1.0] * 12, 3),
+        ("flat, then up", [5.0] * 6 + [6.0, 7.0, 8.0], 3),
+        ("flat, then down", [5.0] * 6 + [4.0, 3.0, 2.0], 3),
+        ("up, flat, down", [float(i) for i in range(1, 7)] + [6.0] * 6 + [5.0, 4.0, 3.0], 3),
+        ("period 2, up, then 1300 flat bars (the averages underflow to zero)", [1.0, 3.0, 2.0, 4.0, 3.0, 5.0, 4.0] + [5.0] * 1300, 2),
+        ("period 1: up, flat, down", [1.0, 2.0, 2.0, 1.0, 1.0, 3.0], 1),
+    ]
+
+
+rsi_edge = []
+for title, closes, period in rsi_edge_scenarios():
+    tv, flat_bars = tradingview_rsi(closes, period)
+    ta = cleaned(talib.RSI(np.array(closes), period)) if period >= 2 else None  # TA-Lib needs a period of at least 2
+    rsi_edge.append({"title": title, "period": period, "closes": closes, "tradingview": tv, "talib": ta, "flatBars": flat_bars})
+
+doc = {"generatedWith": {"TA-Lib": talib.__version__, "pandas": pd.__version__, "numpy": np.__version__}, "datasets": datasets, "rsiEdge": rsi_edge}
 path = FIXTURES / "talib-reference.json"
 path.write_text(json.dumps(doc, separators=(",", ":")))
 print(path, f"{path.stat().st_size / 1024:.0f} KB", [(d["id"], len(d["series"])) for d in datasets])
