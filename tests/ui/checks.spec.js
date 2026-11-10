@@ -218,7 +218,7 @@ test.describe('self-checks page', () => {
       // the legend check itself must notice the wrong value, not only the series comparisons
       await expect(page.getByTestId(`details-${id}`).locator('li.fail', { hasText: 'legend shows the last value' })).toHaveCount(1);
     }
-    for (const id of ['data', 'binance']) {
+    for (const id of ['data', 'binance', 'coinbase']) {
       expect(await number(page.getByTestId(`group-${id}`).locator('.failed'))).toBe(0);
     }
     const failure = page.getByTestId('check-fail').first();

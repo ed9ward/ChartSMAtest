@@ -10,7 +10,7 @@ const ctx = { realRows: async () => rows, realCandles: async () => rows.map(pars
 
 describe('the in-page check suite (everything that does not need a browser)', () => {
   it('has the expected groups', () => {
-    expect(buildGroups(ctx).map((g) => g.id)).toEqual(['sma', 'ema', 'bb', 'rsi', 'talib', 'data', 'binance']);
+    expect(buildGroups(ctx).map((g) => g.id)).toEqual(['sma', 'ema', 'bb', 'rsi', 'talib', 'data', 'binance', 'coinbase']);
   });
 
   it('all checks pass and each group reports its time', async () => {

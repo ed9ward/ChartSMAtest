@@ -3,7 +3,8 @@ import { INDICATORS, computeIndicator, validateParams } from './indicators.js';
 import { sanitizeCandles } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
-import { INTERVAL_SECONDS, fetchHistory, openStream, utcDay, dayChangePercent, formatPercent } from './live.js';
+import { INTERVAL_SECONDS, utcDay, dayChangePercent, formatPercent } from './live.js';
+import { PROVIDERS } from './providers.js';
 
 const { createChart, CandlestickSeries, LineSeries } = window.LightweightCharts;
 
@@ -31,7 +32,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
 
 const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
-const live = { gen: 0, conn: null, offline: false, symbol: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { gen: 0, conn: null, offline: false, error: null, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : '—');
@@ -49,11 +50,11 @@ function setStatus(text, isError = false) {
   el.status.textContent = text;
   el.status.classList.toggle('error', isError);
 }
-const isLive = () => state.scenario === 'binance';
+const isLive = () => state.scenario in PROVIDERS;
 const isOffline = () => stream.offlineSince !== null || live.offline;
 
 function showStatus() {
-  if (isOffline()) return setStatus('Feed disconnected', true);
+  if (isOffline()) return setStatus(live.error ? `Feed disconnected: ${live.error}` : 'Feed disconnected', true);
   const base = isLive() ? `Live ${el.symbol.value} ${el.interval.value}` : '';
   const text = [base, ...state.issues].filter(Boolean).join('; ');
   setStatus(text || 'OK');
@@ -125,11 +126,21 @@ function paintLast(candle) {
   updateLegend();
 }
 
+// Each exchange has its own symbol names (BTCUSDT on Binance, BTC-USD on Coinbase).
+function fillSymbols(exchange) {
+  const symbols = PROVIDERS[exchange].symbols;
+  if ([...el.symbol.options].map((o) => o.value).join() === symbols.join()) return;
+  el.symbol.replaceChildren(...symbols.map((name) => new Option(name, name)));
+}
+
 function loadScenario(name) {
   resetStream();
   closeLive();
   state.scenario = name;
-  if (isLive()) return loadLive();
+  if (isLive()) {
+    fillSymbols(name);
+    return loadLive();
+  }
   const { candles, issues } = sanitizeCandles(SCENARIOS[name]());
   state.candles = candles;
   state.issues = issues;
@@ -243,14 +254,14 @@ function reconnect(missedTicks) {
 function closeLive() {
   live.gen++; // any answer still in flight is now stale
   live.conn?.close();
-  Object.assign(live, { conn: null, offline: false, prevClose: null, dayIndex: null });
+  Object.assign(live, { conn: null, offline: false, error: null, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
-async function loadDay(gen, symbol, interval) {
+async function loadDay(gen, provider, symbol, interval) {
   let close = null;
   try {
-    const days = interval === '1d' ? [] : await fetchHistory({ symbol, interval: '1d', limit: 2 });
+    const days = interval === '1d' ? [] : await provider.fetchHistory({ symbol, interval: '1d', limit: 2 });
     close = days.length === 2 ? days[0].close : null;
   } catch { /* the figure stays empty */ }
   if (gen !== live.gen) return;
@@ -261,21 +272,28 @@ async function loadDay(gen, symbol, interval) {
 async function loadLive() {
   closeLive();
   const gen = live.gen;
+  const provider = PROVIDERS[state.scenario];
   const symbol = el.symbol.value;
   const interval = el.interval.value;
   setStatus(`Loading ${symbol} ${interval}…`);
   try {
-    const history = await fetchHistory({ symbol, interval });
+    const history = await provider.fetchHistory({ symbol, interval, limit: 500 });
     if (gen !== live.gen) return;
     ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history));
     render();
     touch();
-    live.symbol = symbol;
-    loadDay(gen, symbol, interval);
-    live.conn = openStream({
-      symbol, interval,
+    Object.assign(live, { symbol, provider });
+    loadDay(gen, provider, symbol, interval);
+    live.conn = provider.openStream({
+      symbol, interval, seed: lastCandle(),
       onKline: ({ candle }) => onLiveKline(gen, candle, interval),
       onClose: () => { if (gen === live.gen) { live.conn = null; live.offline = true; showStatus(); } },
+      onError: (message) => {
+        if (gen !== live.gen) return;
+        live.conn?.close();
+        Object.assign(live, { conn: null, offline: true, error: message });
+        showStatus();
+      },
     });
     showStatus();
   } catch (e) {
@@ -290,7 +308,7 @@ function onLiveKline(gen, candle, interval) {
   if (gen !== live.gen) return;
   if (interval !== '1d' && live.dayIndex !== null && utcDay(Date.now()) !== live.dayIndex) {
     live.dayIndex = utcDay(Date.now()); // a new UTC day has begun: "previous close" moved
-    loadDay(gen, live.symbol, interval);
+    loadDay(gen, live.provider, live.symbol, interval);
   }
   if (![candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)) return;
   const last = lastCandle();

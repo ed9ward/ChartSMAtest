@@ -5,11 +5,12 @@ import { generateCandles, partialCandle } from '../src/generator.js';
 import { sanitizeCandles } from '../src/sanitize.js';
 import { SCENARIOS } from '../src/scenarios.js';
 import { createFeed, TICKS_PER_CANDLE } from '../src/feed.js';
-import { parseKline, parseKlineMessage, dayChangePercent, formatPercent } from '../src/live.js';
+import { parseKline, parseKlineMessage, dayChangePercent, formatPercent, INTERVAL_SECONDS } from '../src/live.js';
 import { refSMA, refEMA, refBB, refRSI, compareSeries } from './reference.js';
 import { expectedBars } from './data.js';
 import { assert, equal, close, throws } from './assert.js';
 import { compareIndicator } from './compare.js';
+import { parseCandleRow, parseTicker, openStream as openCoinbaseStream, COINBASE_GRANULARITY } from '../src/coinbase.js';
 
 const DATA = generateCandles({ seed: 42, count: 300 });
 const candle = (time, value) => ({ time, open: value, high: value, low: value, close: value, volume: 100 });
@@ -353,6 +354,53 @@ function talibGroup(ctx) {
   return { id: 'talib', title: 'Comparison with TA-Lib', checks };
 }
 
+function coinbaseGroup() {
+  const c = (name, run) => ({ name, run });
+  class FakeSocket {
+    constructor() { this.sent = []; }
+    send(text) { this.sent.push(JSON.parse(text)); }
+    close() {}
+  }
+  const tick = (time, price, size = 1) => ({ data: JSON.stringify({ type: 'ticker', product_id: 'BTC-USD', price: String(price), last_size: String(size), time: new Date(time * 1000).toISOString() }) });
+  const stream = (opts = {}) => {
+    const candles = [];
+    let socket;
+    openCoinbaseStream({ symbol: 'BTC-USD', interval: '1m', onKline: (k) => candles.push(k.candle), WS: class extends FakeSocket { constructor() { super(); socket = this; } }, ...opts });
+    return { candles, socket };
+  };
+  return {
+    id: 'coinbase',
+    title: 'Coinbase data format',
+    checks: [
+      c('a candle row [time, low, high, open, close, volume] becomes a candle', () =>
+        equal(parseCandleRow([1700000000, '70', '75', '71', '74', '1.5']), { time: 1700000000, open: 71, high: 75, low: 70, close: 74, volume: 1.5 })),
+      c('timeframes have the same lengths as on Binance', () => equal(COINBASE_GRANULARITY, INTERVAL_SECONDS)),
+      c('a ticker message is parsed; garbage, other products and bad numbers are ignored', () => {
+        const good = { type: 'ticker', product_id: 'BTC-USD', price: '73068.94', last_size: '0.25', time: '2026-11-10T16:34:51Z' };
+        equal(parseTicker(good, { symbol: 'BTC-USD' }), { price: 73068.94, size: 0.25, time: Date.parse('2026-11-10T16:34:51Z') / 1000 });
+        for (const bad of ['{nope', { ...good, product_id: 'ETH-USD' }, { ...good, price: 'x' }, { ...good, price: '0' }, { ...good, time: 'later' }, { type: 'heartbeat' }]) {
+          equal(parseTicker(bad, { symbol: 'BTC-USD' }), null);
+        }
+      }),
+      c('trades build candles: same minute updates, next minute opens a new one', () => {
+        const { candles, socket } = stream();
+        const t = Date.UTC(2026, 10, 10, 16, 34, 0) / 1000;
+        socket.onmessage(tick(t + 5, 100, 1));
+        socket.onmessage(tick(t + 30, 105, 2));
+        socket.onmessage(tick(t + 40, 98, 1));
+        equal(candles.at(-1), { time: t, open: 100, high: 105, low: 98, close: 98, volume: 4 });
+        socket.onmessage(tick(t + 60, 110, 1));
+        equal(candles.at(-1), { time: t + 60, open: 110, high: 110, low: 110, close: 110, volume: 1 });
+      }),
+      c('the stream subscribes to ticker and heartbeat when it opens', () => {
+        const { socket } = stream();
+        socket.onopen();
+        equal(socket.sent, [{ type: 'subscribe', channels: [{ name: 'ticker', product_ids: ['BTC-USD'] }, { name: 'heartbeat', product_ids: ['BTC-USD'] }] }]);
+      }),
+    ],
+  };
+}
+
 /** @param ctx { realRows(): Promise<rows>, realCandles(): Promise<candles>, talibReference(): Promise<reference file>, ui?: driver } */
 export function buildGroups(ctx) {
   return [
@@ -360,5 +408,6 @@ export function buildGroups(ctx) {
     talibGroup(ctx),
     dataGroup(ctx),
     binanceGroup(ctx),
+    coinbaseGroup(),
   ];
 }
