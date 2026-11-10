@@ -161,6 +161,7 @@ test.describe('strange data', () => {
     huge: { bars: 60, status: 'OK' },
     overflow: { bars: 59, status: 'out-of-range' },
     nan: { bars: 58, status: 'invalid' },
+    inconsistent: { bars: 56, status: 'inconsistent' },
     duplicates: { bars: 60, status: 'duplicate' },
     unordered: { bars: 60, status: 'unordered' },
     empty: { bars: 0, status: 'no data' },

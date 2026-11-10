@@ -13,5 +13,15 @@ export const SCENARIOS = {
   nan: () => base().map((c, i) => (i === 30 ? { ...c, close: NaN } : i === 31 ? { ...c, high: null } : c)),
   duplicates: () => { const d = base(); return [...d, { ...d[10] }, { ...d[20] }]; },
   unordered: () => { const d = base(); return [...d.slice(30), ...d.slice(0, 30)]; },
+  // 4 impossible candles (high below low, high below close, low above open, negative volume); flat and zero-volume ones are fine
+  inconsistent: () => base().map((c, i) => {
+    if (i === 10) return { ...c, high: c.low, low: c.high + 1 };
+    if (i === 20) return { ...c, high: Math.min(c.open, c.close) - 1 };
+    if (i === 30) return { ...c, low: Math.max(c.open, c.close) + 1 };
+    if (i === 40) return { ...c, volume: -5 };
+    if (i === 50) return { ...c, volume: 0 };
+    if (i === 55) return { ...c, open: 100, high: 100, low: 100, close: 100 };
+    return c;
+  }),
   empty: () => [],
 };

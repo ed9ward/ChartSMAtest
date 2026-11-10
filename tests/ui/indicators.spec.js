@@ -98,7 +98,7 @@ for (const [kind, info] of Object.entries(KINDS)) {
       });
     }
 
-    for (const name of ['negative', 'huge', 'overflow', 'nan', 'duplicates', 'unordered', 'empty']) {
+    for (const name of ['negative', 'huge', 'overflow', 'nan', 'inconsistent', 'duplicates', 'unordered', 'empty']) {
       test(`strange data "${name}": page survives, lines match the reference`, async ({ page }) => {
         await open(page);
         await pick(page, kind, { scenario: name });

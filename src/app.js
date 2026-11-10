@@ -1,6 +1,6 @@
 import { SOURCES } from './sma.js';
 import { INDICATORS, computeIndicator, validateParams } from './indicators.js';
-import { sanitizeCandles } from './sanitize.js';
+import { sanitizeCandles, validateCandle } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
 import { INTERVAL_SECONDS, utcDay, dayChangePercent, formatPercent } from './live.js';
@@ -32,7 +32,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
 
 const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
-const live = { gen: 0, conn: null, offline: false, error: null, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { gen: 0, conn: null, offline: false, error: null, rejected: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : '—');
@@ -56,7 +56,8 @@ const isOffline = () => stream.offlineSince !== null || live.offline;
 function showStatus() {
   if (isOffline()) return setStatus(live.error ? `Feed disconnected: ${live.error}` : 'Feed disconnected', true);
   const base = isLive() ? `Live ${el.symbol.value} ${el.interval.value}` : '';
-  const text = [base, ...state.issues].filter(Boolean).join('; ');
+  const rejected = live.rejected ? `ignored ${live.rejected} invalid update(s)` : ''; // never drop live data silently
+  const text = [base, ...state.issues, rejected].filter(Boolean).join('; ');
   setStatus(text || 'OK');
 }
 
@@ -254,7 +255,7 @@ function reconnect(missedTicks) {
 function closeLive() {
   live.gen++; // any answer still in flight is now stale
   live.conn?.close();
-  Object.assign(live, { conn: null, offline: false, error: null, prevClose: null, dayIndex: null });
+  Object.assign(live, { conn: null, offline: false, error: null, rejected: 0, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
@@ -306,11 +307,15 @@ async function loadLive() {
 
 function onLiveKline(gen, candle, interval) {
   if (gen !== live.gen) return;
+  if (validateCandle(candle)) { // the same rule as for the history
+    live.rejected++;
+    showStatus();
+    return;
+  }
   if (interval !== '1d' && live.dayIndex !== null && utcDay(Date.now()) !== live.dayIndex) {
     live.dayIndex = utcDay(Date.now()); // a new UTC day has begun: "previous close" moved
     loadDay(gen, live.provider, live.symbol, interval);
   }
-  if (![candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)) return;
   const last = lastCandle();
   if (!last || candle.time === last.time) {
     if (last) state.candles[state.candles.length - 1] = candle;
@@ -379,6 +384,6 @@ window.__app = {
   state: () => ({
     indicator: state.indicator, source: state.source, period: state.period, mult: state.mult, scenario: state.scenario,
     bars: state.candles.length, streaming: stream.timer !== null, offline: isOffline(), ticks: stream.ticks,
-    live: isLive() && live.conn !== null, symbol: el.symbol.value, interval: el.interval.value,
+    live: isLive() && live.conn !== null, rejected: live.rejected, symbol: el.symbol.value, interval: el.interval.value,
   }),
 };

@@ -2,7 +2,7 @@
 import { SOURCES, computeSMA } from '../src/sma.js';
 import { INDICATORS, computeIndicator } from '../src/indicators.js';
 import { generateCandles, partialCandle } from '../src/generator.js';
-import { sanitizeCandles } from '../src/sanitize.js';
+import { sanitizeCandles, validateCandle } from '../src/sanitize.js';
 import { SCENARIOS } from '../src/scenarios.js';
 import { createFeed, TICKS_PER_CANDLE } from '../src/feed.js';
 import { parseKline, parseKlineMessage, dayChangePercent, formatPercent, INTERVAL_SECONDS } from '../src/live.js';
@@ -217,7 +217,7 @@ function uiChecks(kind, ctx) {
       matchChart(expectedBars(60, target), defaults, 'close');
     }
   });
-  for (const name of ['negative', 'huge', 'overflow', 'nan', 'duplicates', 'unordered', 'empty']) {
+  for (const name of ['negative', 'huge', 'overflow', 'nan', 'inconsistent', 'duplicates', 'unordered', 'empty']) {
     add(`strange data "${name}": page survives, lines match the reference`, () => {
       const errorsBefore = ui().errors.length;
       ui().setup({ indicator: kind, scenario: name });
@@ -276,13 +276,21 @@ function dataGroup(ctx) {
         for (let i = 0; i < TICKS_PER_CANDLE; i++) assert(feed.tick(), 'ended too early');
         equal(feed.tick(), null);
       }),
-      ...[['negative', 60], ['huge', 60], ['overflow', 59], ['nan', 58], ['duplicates', 60], ['unordered', 60], ['empty', 0]].map(([name, bars]) =>
+      ...[['negative', 60], ['huge', 60], ['overflow', 59], ['nan', 58], ['inconsistent', 56], ['duplicates', 60], ['unordered', 60], ['empty', 0]].map(([name, bars]) =>
         c(`sanitizer: "${name}" data set keeps ${bars} bars`, () => {
           const { candles, issues } = sanitizeCandles(SCENARIOS[name]());
           equal(candles.length, bars);
           candles.forEach((x, i) => assert(i === 0 || x.time > candles[i - 1].time, 'not sorted or duplicated'));
           if (name !== 'negative' && name !== 'huge') assert(issues.length > 0, 'the problem was not reported');
         })),
+      c('one rule for every candle: impossible OHLC and negative volume are rejected, odd but possible ones are kept', () => {
+        const base = { time: 1, open: 100, high: 110, low: 90, close: 105, volume: 5 };
+        equal(validateCandle(base), null);
+        for (const ok of [{ volume: 0 }, { open: 100, high: 100, low: 100, close: 100 }, { open: -100, high: -90, low: -110, close: -95 }]) equal(validateCandle({ ...base, ...ok }), null, JSON.stringify(ok));
+        for (const bad of [{ high: 100 }, { low: 101 }, { high: 90, low: 110 }, { volume: -1 }]) equal(validateCandle({ ...base, ...bad }), 'inconsistent', JSON.stringify(bad));
+        equal(validateCandle({ ...base, open: NaN }), 'invalid');
+        equal(validateCandle({ ...base, high: 1e15 }), 'range');
+      }),
       c('SMA of the sanitized data never contains NaN', () => {
         for (const name of Object.keys(SCENARIOS)) {
           assert(computeSMA(sanitizeCandles(SCENARIOS[name]()).candles, 5, 'ohlc4').every((p) => Number.isFinite(p.value)), name);

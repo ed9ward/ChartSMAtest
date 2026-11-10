@@ -106,6 +106,18 @@ test.describe('Coinbase history', () => {
   });
 });
 
+test.describe('Coinbase impossible candles', () => {
+  test('history rows with low above high or a negative volume are dropped', async ({ page }) => {
+    const rows = CB_ROWS.map((r) => [...r]);
+    rows[5] = [rows[5][0], 80000, 1, rows[5][3], rows[5][4], rows[5][5]]; // low above high
+    rows[15][5] = -2;                                                    // negative volume
+    const mock = await mockCoinbase(page, () => ({ body: rows }));
+    await goLive(page, mock);
+    await expect(page.getByTestId('bar-count')).toHaveText('48');
+    await expect(page.getByTestId('status')).toHaveText('Live BTC-USD 1m; dropped 2 inconsistent candle(s) (impossible high/low or negative volume)');
+  });
+});
+
 test.describe('Coinbase live trades', () => {
   test('a trade inside the newest minute updates close/high, keeps open/low, continues the volume', async ({ page }) => {
     const mock = await mockCoinbase(page);

@@ -530,3 +530,83 @@ test.describe('update time and change per day', () => {
     expect(mock.dailyRequests.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+test.describe('impossible candles', () => {
+  const MSG = 'dropped 3 inconsistent candle(s) (impossible high/low or negative volume)';
+
+  test('history rows with impossible OHLC or a negative volume are dropped and the status says so', async ({ page }) => {
+    const rows = RAW.map((r) => [...r]);
+    rows[10][2] = '1';          // high far below the low
+    rows[20][5] = '-3';         // negative volume
+    rows[30][1] = '9999999';    // open above the high
+    const mock = await mockBinance(page, () => ({ body: rows }));
+    await goLive(page, mock);
+    await expect(page.getByTestId('bar-count')).toHaveText('47');
+    await expect(page.getByTestId('status')).toHaveText(`Live BTCUSDT 1m; ${MSG}`);
+    const kept = CANDLES.filter((_, i) => ![10, 20, 30].includes(i));
+    expect((await candleData(page)).map(ohlc)).toEqual(kept.map(ohlc));
+    expectSeriesClose(await smaData(page), refSMA(kept, 20, 'close'));
+  });
+
+  test('impossible live updates are ignored and counted; valid ones keep working', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    const before = { candles: await candleData(page), sma: await smaData(page) };
+    const ws = mock.sockets[0].ws;
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73400, l: 73482, c: 73450 }));              // high below the low
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73490, l: 73480, c: 73500 }));              // high below the close
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73490, c: 73500 }));              // low above the open
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: -1 }));       // negative volume
+    ws.send(klineMsg({ t: T0 + 60000, o: 73488, h: 73400, l: 73488, c: 73488 }));      // impossible new bar
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m; ignored 5 invalid update(s)');
+    expect(await candleData(page)).toEqual(before.candles);
+    expect(await smaData(page)).toEqual(before.sma);
+    await expect(page.getByTestId('bar-count')).toHaveText('50');
+
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500 })); // a valid update still works
+    await expect(page.getByTestId('last-close')).toHaveText('73500.00');
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m; ignored 5 invalid update(s)');
+  });
+
+  test('an impossible update far in the future does not trigger a history reload', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.send(klineMsg({ t: T0 + 60000 * 30, o: 1, h: 0, l: 1, c: 1 }));
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m; ignored 1 invalid update(s)');
+    await page.waitForTimeout(300);
+    expect(mock.requests).toHaveLength(1);
+    expect(mock.sockets).toHaveLength(1);
+  });
+
+  test('the count starts again after a reload of the data', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 1, h: 0, l: 1, c: 1 }));
+    await expect(page.getByTestId('status')).toContainText('ignored 1');
+    await page.getByTestId('interval').selectOption('5m');
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 5m');
+  });
+
+  test('flat, zero-volume and consistent negative-price updates are accepted', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    const ws = mock.sockets[0].ws;
+    ws.send(klineMsg({ t: T0 + 60000, o: 73488, h: 73488, l: 73488, c: 73488, v: 0 }));
+    await expect(page.getByTestId('bar-count')).toHaveText('51');
+    ws.send(klineMsg({ t: T0 + 120000, o: -5, h: -1, l: -9, c: -2 }));
+    await expect(page.getByTestId('bar-count')).toHaveText('52');
+    await expect(page.getByTestId('last-close')).toHaveText('-2.00');
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m');
+  });
+
+  test('impossible candles never reach the indicators: volume source stays correct', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.getByTestId('source').selectOption('volume');
+    await page.getByTestId('period').fill('1');
+    const ws = mock.sockets[0].ws;
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: -1000 }));
+    ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: 7 }));
+    await expect(page.getByTestId('last-sma')).toHaveText('7.00');
+  });
+});

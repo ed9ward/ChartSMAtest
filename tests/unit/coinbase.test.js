@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { COINBASE_GRANULARITY, MAX_CANDLES, parseCandleRow, fetchHistory, parseTicker, openStream } from '../../src/coinbase.js';
 import { INTERVAL_SECONDS } from '../../src/live.js';
 import { PROVIDERS } from '../../src/providers.js';
+import { validateCandle } from '../../src/sanitize.js';
+import { mulberry32 } from '../../src/generator.js';
 
 const ok = (body) => ({ ok: true, status: 200, json: async () => body });
 // [time, low, high, open, close, volume], newest first, like the real API
@@ -176,6 +178,21 @@ describe('openStream builds candles from trades', () => {
     got[0].high = 1e9;
     ws.onmessage(trade(T(34, 2), 101));
     expect(got[1].high).toBe(101);
+  });
+  it('candles built from any sequence of trades are always consistent', () => {
+    const rnd = mulberry32(5);
+    for (const interval of ['1m', '5m', '1h', '1d']) {
+      const { got, ws } = open({ interval });
+      let t = Date.UTC(2026, 10, 10, 16, 0, 0) / 1000;
+      let price = 100;
+      for (let i = 0; i < 500; i++) {
+        t += rnd() * 90;
+        price = Math.max(0.01, price + (rnd() - 0.5) * 6);
+        ws.onmessage(trade(new Date(t * 1000).toISOString(), price, rnd() < 0.2 ? 0 : rnd() * 3));
+      }
+      expect(got.length).toBeGreaterThan(400);
+      for (const c of got) expect(validateCandle(c), JSON.stringify(c)).toBeNull();
+    }
   });
   it('an error message of the server is passed on with its text', () => {
     const errors = [];

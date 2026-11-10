@@ -5,24 +5,36 @@ export const MAX_ABS_PRICE = 1e12;
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 
+/**
+ * The one rule for "is this candle usable", used for history and for live updates alike.
+ * Returns null when it is, otherwise why not:
+ *   'invalid'      not numbers (NaN, null, strings, missing fields)
+ *   'range'        an absurd price
+ *   'inconsistent' impossible OHLC (high below open/close/low, low above open/close) or a negative volume
+ * Negative prices are allowed (some instruments have them); the OHLC rules still apply to them.
+ */
+export function validateCandle(c) {
+  if (!c || !isNum(c.time) || ![c.open, c.high, c.low, c.close].every(isNum) || !isNum(c.volume)) return 'invalid';
+  if ([c.open, c.high, c.low, c.close].some((p) => Math.abs(p) > MAX_ABS_PRICE)) return 'range';
+  // high >= max(open, close) and low <= min(open, close) also give high >= low
+  if (c.high < Math.max(c.open, c.close) || c.low > Math.min(c.open, c.close) || c.volume < 0) return 'inconsistent';
+  return null;
+}
+
 export function sanitizeCandles(raw) {
   const issues = [];
   if (!Array.isArray(raw)) return { candles: [], issues: ['input is not an array'] };
 
   const byTime = new Map();
-  let invalid = 0;
-  let outOfRange = 0;
+  const dropped = { invalid: 0, range: 0, inconsistent: 0 };
   let duplicates = 0;
   let unordered = false;
   let prevTime = -Infinity;
 
   for (const c of raw) {
-    if (!c || !isNum(c.time) || ![c.open, c.high, c.low, c.close].every(isNum) || !isNum(c.volume)) {
-      invalid++;
-      continue;
-    }
-    if ([c.open, c.high, c.low, c.close].some((p) => Math.abs(p) > MAX_ABS_PRICE)) {
-      outOfRange++;
+    const problem = validateCandle(c);
+    if (problem) {
+      dropped[problem]++;
       continue;
     }
     if (c.time < prevTime) unordered = true;
@@ -32,8 +44,9 @@ export function sanitizeCandles(raw) {
   }
 
   const candles = [...byTime.values()].sort((a, b) => a.time - b.time);
-  if (invalid) issues.push(`dropped ${invalid} invalid candle(s)`);
-  if (outOfRange) issues.push(`dropped ${outOfRange} out-of-range candle(s)`);
+  if (dropped.invalid) issues.push(`dropped ${dropped.invalid} invalid candle(s)`);
+  if (dropped.range) issues.push(`dropped ${dropped.range} out-of-range candle(s)`);
+  if (dropped.inconsistent) issues.push(`dropped ${dropped.inconsistent} inconsistent candle(s) (impossible high/low or negative volume)`);
   if (duplicates) issues.push(`merged ${duplicates} duplicate timestamp(s)`);
   if (unordered) issues.push('sorted unordered data');
   if (candles.length === 0) issues.push('no data to display');
