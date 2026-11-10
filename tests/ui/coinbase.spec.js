@@ -332,7 +332,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.send(0, T0 + 30, 73495, 0.1);   // the next one reveals the hole
     await expect(status(page)).toHaveText('Live BTC-USD 1m; recovered 1 missed trade(s)');
     expect(mock.tradeRequests).toHaveLength(1);
-    expect(mock.tradeRequests[0].search).toBe('?limit=1000');
+    expect(mock.tradeRequests[0].search).toBe('?limit=1000&before=1001');
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0, open: 73484, high: 73600, low: 73482, close: 73495 });
     await page.getByTestId('source').selectOption('volume');
     await page.getByTestId('period').fill('1');
