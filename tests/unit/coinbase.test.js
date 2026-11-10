@@ -124,6 +124,8 @@ describe('parseMatch', () => {
     ['missing trade id', msg({ trade_id: undefined })], ['fractional trade id', msg({ trade_id: 1.5 })], ['negative trade id', msg({ trade_id: -1 })],
     ['text trade id', msg({ trade_id: 'abc' })], ['null trade id', msg({ trade_id: null })], ['empty trade id', msg({ trade_id: '' })],
     ['null size', msg({ size: null })], ['empty size', msg({ size: '' })], ['null price', msg({ price: null })], ['numeric time', msg({ time: 1700000000 })],
+    ['date without time', msg({ time: '2026-11-10' })], ['timestamp without timezone', msg({ time: '2026-11-10T16:34:51' })],
+    ['invalid calendar date', msg({ time: '2026-02-30T16:34:51Z' })], ['invalid clock time', msg({ time: '2026-11-10T25:34:51Z' })],
   ])('ignores %s', (_, data) => {
     expect(parseMatch(data, ctx)).toBeNull();
   });
