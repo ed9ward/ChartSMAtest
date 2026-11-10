@@ -21,7 +21,7 @@ export function validateCandle(c) {
   return null;
 }
 
-export function sanitizeCandles(raw, intervalSeconds = null) {
+export function sanitizeCandles(raw, intervalSeconds = null, { allowSparse = false } = {}) {
   if (intervalSeconds !== null && (!Number.isSafeInteger(intervalSeconds) || intervalSeconds <= 0)) {
     throw new RangeError(`intervalSeconds must be a positive safe integer, got ${intervalSeconds}`);
   }
@@ -58,7 +58,10 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
   if (dropped.inconsistent) issues.push(`dropped ${dropped.inconsistent} inconsistent candle(s) (impossible high/low or negative volume)`);
   if (duplicates) issues.push(`merged ${duplicates} duplicate timestamp(s)`);
   if (unordered) issues.push('sorted unordered data');
-  if (intervalSeconds !== null && candles.length > 1) {
+  // Coinbase intentionally omits buckets with no trades. Do not report those normal sparse bars
+  // as data loss unless malformed rows were dropped from the same response.
+  const droppedRows = dropped.invalid + dropped.range + dropped.inconsistent;
+  if (intervalSeconds !== null && candles.length > 1 && (!allowSparse || droppedRows > 0)) {
     let missing = 0;
     for (let i = 1; i < candles.length; i++) {
       const steps = (candles[i].time - candles[i - 1].time) / intervalSeconds;
