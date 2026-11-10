@@ -29,7 +29,7 @@ test.describe('comparison with TA-Lib', () => {
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
     await expect(page.getByTestId('stats')).toBeVisible();
-    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(30); // 6 data sets x 5 comparisons
+    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(35); // 7 data sets x 5 comparisons
     for (const dataset of REFERENCE_SPEC.datasets.map((d) => d.id)) {
       for (const indicator of ['sma', 'ema-first', 'ema-sma', 'bollinger-bands', 'rsi']) {
         const row = page.getByTestId(`stat-${dataset}-${indicator}`);
@@ -79,7 +79,7 @@ test.describe('comparison with TA-Lib', () => {
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
     await expect(page.getByTestId('verdict')).toHaveText(new RegExp(`^${NEED_REFERENCE_FILE} of \\d+ checks failed`));
-    expect(NEED_REFERENCE_FILE).toBe(33); // 1 completeness + 30 library comparisons + 2 RSI edge-case checks
+    expect(NEED_REFERENCE_FILE).toBe(38); // 1 completeness + 35 library comparisons + 2 RSI edge-case checks
     await expect(page.getByTestId('details-talib').locator('li.fail').first()).toContainText('HTTP 404');
     expect(errors).toEqual(['Failed to load resource: the server responded with a status of 404 (Not Found)']);
     errors.length = 0;

@@ -173,10 +173,10 @@ describe('the reference file is complete', () => {
 
   it('has exactly the expected number of series, worked out from the grid (sources x periods x variants)', () => {
     expect(REFERENCE_SPEC.variants).toHaveLength(5);
-    expect(ref.datasets.map((d) => d.series.length)).toEqual([8 * 3 * 5, 3 * 3 * 5, 1 * 2 * 5, 1 * 2 * 5, 1 * 2 * 5, 1 * 2 * 5]);
-    expect(ref.datasets.map((d) => d.series.length)).toEqual([120, 45, 10, 10, 10, 10]);
-    expect(ref.datasets.map((d) => d.id)).toEqual(['real50', 'walk300', 'tiny', 'huge', 'negative', 'long2000']);
-    expect(ref.datasets.map((d) => d.candles.length)).toEqual([50, 300, 300, 300, 300, 2000]);
+    expect(ref.datasets.map((d) => d.series.length)).toEqual([8 * 3 * 5, 3 * 3 * 5, 1 * 2 * 5, 1 * 2 * 5, 1 * 2 * 5, 1 * 2 * 5, 3 * 3 * 5]);
+    expect(ref.datasets.map((d) => d.series.length)).toEqual([120, 45, 10, 10, 10, 10, 45]);
+    expect(ref.datasets.map((d) => d.id)).toEqual(['real50', 'walk300', 'tiny', 'huge', 'negative', 'long2000', 'real500']);
+    expect(ref.datasets.map((d) => d.candles.length)).toEqual([50, 300, 300, 300, 300, 2000, 500]);
     for (const [i, d] of ref.datasets.entries()) {
       const spec = REFERENCE_SPEC.datasets[i];
       expect(d.series.length).toBe(spec.sources.length * spec.periods.length * REFERENCE_SPEC.variants.length);

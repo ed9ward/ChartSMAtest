@@ -15,6 +15,7 @@ export const REFERENCE_SPEC = {
     { id: 'huge', candles: 300, sources: ['close'], periods: [14, 50] },
     { id: 'negative', candles: 300, sources: ['close'], periods: [14, 50] },
     { id: 'long2000', candles: 2000, sources: ['close'], periods: [14, 200] },
+    { id: 'real500', candles: 500, sources: ['close', 'hlc3', 'volume'], periods: [14, 50, 200] },
   ],
   variants: [
     { indicator: 'sma' },
