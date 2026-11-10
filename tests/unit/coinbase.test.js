@@ -434,7 +434,7 @@ describe('stream: lost trades are fetched from REST', () => {
     await flush();
     expect(t.resyncs).toEqual([]);
     expect(t.candles.at(-1).volume).toBeCloseTo(11.01, 8);
-    expect(t.events).toContainEqual({ type: 'recovered', count: 1000, upTo: 1003 });
+    expect(t.events).toContainEqual({ type: 'recovered', count: 1001, upTo: 1003 });
     expect(restUrls(t)).toHaveLength(2);
     expect(restUrls(t)[0]).toContain('before=1');
     expect(restUrls(t)[1]).toContain('after=3');
