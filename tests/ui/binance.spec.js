@@ -130,7 +130,8 @@ test.describe('live updates', () => {
     for (let i = 1; i <= 24; i++) {
       price += (i % 3 === 0 ? -1 : 1) * (i * 1.37);
       const t = T0 + 60000 * Math.floor(i / 4); // 4 ticks per bar
-      const c = { time: t / 1000, open: 73488, high: price + 5, low: price - 5, close: price, volume: i };
+      // a consistent candle: high/low must enclose the open and the close
+      const c = { time: t / 1000, open: 73488, high: Math.max(73488, price) + 5, low: Math.min(73488, price) - 5, close: price, volume: i };
       if (expected.at(-1).time === c.time) expected[expected.length - 1] = c; else expected.push(c);
       mock.sockets[0].ws.send(klineMsg({ t, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume }));
     }
