@@ -6,6 +6,7 @@
 // heartbeat channel and fetching the missed trades from REST. That is what openStream() does.
 
 import { assertLimit } from './limit.js';
+import { parseFiniteNumber, parseBucketTimestamp } from './parse.js';
 
 export const COINBASE_GRANULARITY = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 export const COINBASE_REST = 'https://api.exchange.coinbase.com';
@@ -13,9 +14,13 @@ export const COINBASE_WS = 'wss://ws-feed.exchange.coinbase.com';
 export const MAX_CANDLES = 300;
 export const MAX_TRADES = 1000; // trades per REST request
 
-export function parseCandleRow(row) {
+export function parseCandleRow(row, interval = null) {
   if (!Array.isArray(row) || row.length < 6) return null;
-  const [time, low, high, open, close, volume] = row.map(Number);
+  const intervalSeconds = interval === null ? null : COINBASE_GRANULARITY[interval];
+  if (interval !== null && !intervalSeconds) return null;
+  const time = parseBucketTimestamp(row[0], 1, intervalSeconds);
+  const [low, high, open, close, volume] = row.slice(1, 6).map(parseFiniteNumber);
+  if (time === null || [low, high, open, close, volume].some((v) => v === null)) return null;
   return { time, open, high, low, close, volume };
 }
 
@@ -33,20 +38,28 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
   if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
-  const candles = body.map(parseCandleRow).filter(Boolean).sort((a, b) => a.time - b.time);
+  const candles = [];
+  let invalidCount = 0;
+  for (const row of body) {
+    const candle = parseCandleRow(row, interval);
+    if (candle) candles.push(candle);
+    else invalidCount++;
+  }
+  candles.invalidCount = invalidCount;
+  candles.sort((a, b) => a.time - b.time);
   return candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
 }
 
 // --- trades ----------------------------------------------------------------
 // Numbers arrive as numbers or as numeric strings; null, empty strings and objects are not numbers (Number(null) would be 0).
-const toNumber = (x) => (typeof x === 'number' ? x : typeof x === 'string' && x.trim() !== '' ? Number(x) : NaN);
+const toNumber = (x) => parseFiniteNumber(x) ?? NaN;
 
 const toTrade = (tradeId, price, size, time, last = false) => {
   tradeId = toNumber(tradeId);
   price = toNumber(price);
   size = toNumber(size);
   time = typeof time === 'string' ? Date.parse(time) / 1000 : NaN;
-  if (!Number.isInteger(tradeId) || tradeId < 0 || !Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isSafeInteger(tradeId) || tradeId < 0 || !Number.isFinite(price) || price <= 0) return null;
   if (!Number.isFinite(size) || size < 0 || !Number.isFinite(time)) return null;
   return { tradeId, price, size, time, last };
 };
@@ -71,7 +84,7 @@ export function parseHeartbeat(data, { symbol } = {}) {
   if (msg?.type !== 'heartbeat') return null;
   if (symbol && msg.product_id !== symbol) return null;
   const lastTradeId = toNumber(msg.last_trade_id);
-  return Number.isInteger(lastTradeId) && lastTradeId >= 0 ? { lastTradeId } : null;
+  return Number.isSafeInteger(lastTradeId) && lastTradeId >= 0 ? { lastTradeId } : null;
 }
 
 /** The newest trades (up to 1000), oldest first. This is the supported way to get trades a WebSocket client missed. */
@@ -105,6 +118,7 @@ const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k
 export function openStream({
   symbol, interval, onKline, onClose, onError, onEvent, onResync, onActivity, seed,
   WS = WebSocket, fetchFn = fetch, graceMs = 300, reconcileDelayMs = 2000,
+  reconcileAttempts = 3, reconcileRetryMs = 1000, applyLastMatchWhenUnseeded = true,
 }) {
   const granularity = COINBASE_GRANULARITY[interval];
   const ws = new WS(COINBASE_WS);
@@ -119,18 +133,38 @@ export function openStream({
   const timers = new Set();
 
   const later = (fn, ms) => {
-    const timer = setTimeout(() => { timers.delete(timer); fn(); }, ms);
+    if (closedByUs) return;
+    const timer = setTimeout(() => { timers.delete(timer); if (!closedByUs) fn(); }, ms);
     timers.add(timer);
   };
   const event = (type, extra = {}) => onEvent?.({ type, ...extra });
 
-  // The exchange's version of a closed candle replaces ours when they differ.
-  const reconcile = (closed) => later(async () => {
-    try {
-      const exact = (await fetchHistory({ symbol, interval, fetchFn })).find((c) => c.time === closed.time);
-      if (exact && !closedByUs && !sameCandle(exact, closed)) onKline({ candle: exact, correction: true });
-    } catch { /* a safety net only: the live candle stays as it is */ }
-  }, reconcileDelayMs);
+  // The exchange's version of a closed candle replaces ours when they differ. Transient REST
+  // failures and temporarily missing candles are retried a bounded number of times.
+  const reconcile = (closed) => {
+    const check = async (attempt) => {
+      if (closedByUs) return;
+      try {
+        const exact = (await fetchHistory({ symbol, interval, fetchFn })).find((c) => c.time === closed.time);
+        if (closedByUs) return;
+        if (exact) {
+          if (!sameCandle(exact, closed)) onKline({ candle: exact, correction: true });
+          return;
+        }
+        throw new Error('closed candle not returned by REST');
+      } catch (error) {
+        if (closedByUs) return;
+        const reason = error instanceof Error ? error.message : String(error);
+        if (attempt < reconcileAttempts) {
+          event('reconcile-retry', { time: closed.time, attempt, reason });
+          later(() => check(attempt + 1), reconcileRetryMs * attempt);
+        } else {
+          event('reconcile-failed', { time: closed.time, attempts: attempt, reason });
+        }
+      }
+    };
+    later(() => check(1), reconcileDelayMs);
+  };
 
   const apply = (trade) => {
     const bucket = Math.floor(trade.time / granularity) * granularity;
@@ -176,7 +210,8 @@ export function openStream({
         apply(trade);
         lastId = id;
       }
-      heartbeatId = null;
+      // Preserve a newer heartbeat watermark received while this REST request was in flight.
+      if (heartbeatId !== null && heartbeatId <= lastId) heartbeatId = null;
       behind = 0;
       if (fetched) event('recovered', { count: fetched, upTo: lastId });
       drain();
@@ -186,13 +221,18 @@ export function openStream({
     } finally {
       recovering = false;
     }
-    if (!closedByUs && !gaveUp && ahead.size) later(recover, 0); // more trades were held back while we were fetching
+    if (!closedByUs && !gaveUp && (ahead.size || (heartbeatId !== null && heartbeatId > lastId))) {
+      later(recover, 0); // more trades or a newer heartbeat arrived while we were fetching
+    }
   };
 
   const accept = (trade) => {
     if (lastId === null) { // the first message fixes where we are
       lastId = trade.tradeId;
-      if (!trade.last) apply(trade);
+      // A last_match already represented by a same-bucket REST seed must not be counted twice.
+      // If it starts a newer bucket, or there is no seed, it is not part of the REST snapshot.
+      const bucket = Math.floor(trade.time / granularity) * granularity;
+      if (!trade.last || (current && bucket > current.time) || (!current && applyLastMatchWhenUnseeded)) apply(trade);
       return;
     }
     if (trade.tradeId <= lastId || ahead.has(trade.tradeId)) return void event('duplicate', { tradeId: trade.tradeId });

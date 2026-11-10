@@ -666,6 +666,16 @@ test.describe('Coinbase connection problems', () => {
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
+  test('sparse Coinbase intervals are retained and reported without reconnecting', async ({ page }) => {
+    const mock = await mockCoinbase(page);
+    await goLive(page, mock);
+    tape(mock).send(0, T0 + 180, 73550, 1);
+    await expect(page.getByTestId('bar-count')).toHaveText('51');
+    await expect(status(page)).toContainText('skipped 2 empty/unknown interval(s)');
+    expect(mock.sockets).toHaveLength(1);
+    expect(mock.requests).toHaveLength(1);
+  });
+
   test('the server dropping the connection is shown, and the app reconnects by itself', async ({ page }) => {
     await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
     const mock = await mockCoinbase(page);

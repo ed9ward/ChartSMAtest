@@ -463,7 +463,7 @@ function coinbaseGroup() {
   const stream = (restTrades = []) => {
     const out = { candles: [], events: [], resyncs: [], socket: null };
     openCoinbaseStream({
-      symbol: 'BTC-USD', interval: '1m', graceMs: 0, reconcileDelayMs: null,
+      symbol: 'BTC-USD', interval: '1m', graceMs: 0, reconcileDelayMs: null, applyLastMatchWhenUnseeded: false,
       WS: class extends FakeSocket { constructor() { super(); out.socket = this; } },
       fetchFn: async () => ({ ok: true, status: 200, json: async () => restTrades }),
       onKline: (k) => out.candles.push(k.candle), onEvent: (e) => out.events.push(e), onResync: (r) => out.resyncs.push(r),

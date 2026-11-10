@@ -31,8 +31,8 @@ describe('parseCandleRow', () => {
 describe('fetchHistory', () => {
   it('asks for the product and granularity, and returns candles oldest first', async () => {
     let url;
-    const candles = await fetchHistory({ symbol: 'BTC-USD', interval: '5m', fetchFn: async (u) => { url = u; return ok(ROWS); } });
-    expect(url).toBe('https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300');
+    const candles = await fetchHistory({ symbol: 'BTC-USD', interval: '1m', fetchFn: async (u) => { url = u; return ok(ROWS); } });
+    expect(url).toBe('https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60');
     expect(candles.map((c) => c.time)).toEqual([1080, 1140, 1200]);
     expect(candles[2]).toEqual({ time: 1200, open: 10, high: 12, low: 9, close: 11, volume: 5 });
   });
@@ -182,7 +182,7 @@ function setup({ trades = [], candles = [], ...opts } = {}) {
   out.trades = trades.map(([id, seconds, price, size = 1]) => ({ trade_id: id, time: at(seconds), price: String(price), size: String(size), side: 'buy' }));
   out.restCandles = candles;
   const conn = openStream({
-    symbol: 'BTC-USD', interval: '1m', WS: FakeWS, fetchFn, graceMs: 0, reconcileDelayMs: null,
+    symbol: 'BTC-USD', interval: '1m', WS: FakeWS, fetchFn, graceMs: 0, reconcileDelayMs: null, applyLastMatchWhenUnseeded: false,
     onKline: ({ candle, correction }) => (correction ? out.corrections : out.candles).push(candle),
     onEvent: (e) => out.events.push(e),
     onResync: (reason) => out.resyncs.push(reason),
@@ -210,6 +210,18 @@ describe('stream: subscription and baseline', () => {
     expect(t.candles).toEqual([]);
     t.send(match(501, 10, 101, 2));
     expect(t.candles[0]).toEqual({ time: BASE, open: 90, high: 120, low: 80, close: 101, volume: 12 });
+  });
+  it('applies last_match when there is no REST seed', () => {
+    const t = setup({ applyLastMatchWhenUnseeded: true });
+    t.send(lastMatch(7, 5, 100));
+    expect(t.candles).toEqual([{ time: BASE, open: 100, high: 100, low: 100, close: 100, volume: 1 }]);
+    t.send(match(8, 10, 101, 2));
+    expect(t.candles.at(-1)).toEqual({ time: BASE, open: 100, high: 101, low: 100, close: 101, volume: 3 });
+  });
+  it('applies last_match when it starts a bucket newer than the REST seed', () => {
+    const t = setup({ seed: { time: BASE, open: 90, high: 100, low: 80, close: 95, volume: 10 } });
+    t.send(lastMatch(500, 65, 110));
+    expect(t.candles.at(-1)).toEqual({ time: BASE + 60, open: 110, high: 110, low: 110, close: 110, volume: 1 });
   });
   it('without a last_match the first trade fixes the baseline and is applied', () => {
     const t = setup();
@@ -372,6 +384,32 @@ describe('stream: lost trades are fetched from REST', () => {
     await flush();
     expect(t.candles.at(-1)).toEqual({ time: BASE, open: 100, high: 101, low: 99, close: 99, volume: 4 });
     expect(t.events).toContainEqual({ type: 'recovered', count: 1, upTo: 3 });
+  });
+  it('does not discard a newer heartbeat watermark received while REST recovery is in flight', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let calls = 0;
+    const fetchFn = async (url) => {
+      if (!url.includes('/trades')) return ok([]);
+      calls++;
+      if (calls === 1) await gate;
+      const ids = calls === 1 ? [4, 3, 2] : [5];
+      return ok(ids.map((id) => ({ trade_id: id, time: at(id), price: String(100 + id), size: '1', side: 'buy' })));
+    };
+    const t = setup({ fetchFn, graceMs: 0 });
+    t.send(lastMatch(0));
+    t.send(match(1, 1, 101, 1));
+    t.send(match(4, 4, 104, 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    t.send(heartbeat(5));
+    t.send(heartbeat(5));
+    release();
+    await flush();
+    await flush();
+    expect(calls).toBe(2);
+    expect(t.resyncs).toEqual([]);
+    expect(t.events.filter((e) => e.type === 'recovered').map((e) => e.upTo)).toEqual([4, 5]);
+    expect(t.candles.at(-1).close).toBe(105);
   });
   it('a heartbeat that is not ahead resets the count; a heartbeat ahead that is then caught up with never fetches', async () => {
     const t = setup({ trades: [[3, 3, 99, 1]] });
@@ -537,6 +575,36 @@ describe('stream: the exchange corrects a closed candle', () => {
     expect(a.corrections).toEqual([]);
     expect(b.corrections).toEqual([]);
     expect(a.resyncs).toEqual([]);
+  });
+  it('retries a failed reconciliation and applies the exchange candle when REST recovers', async () => {
+    let attempts = 0;
+    const fetchFn = async () => {
+      attempts++;
+      if (attempts === 1) throw new TypeError('temporary network failure');
+      return ok([[BASE, 95, 130, 100, 98, 7.5]]);
+    };
+    const t = setup({ reconcileDelayMs: 1, reconcileRetryMs: 1, fetchFn });
+    t.send(lastMatch(0));
+    t.send(match(1, 10, 100, 1));
+    t.send(match(2, 61, 110, 1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(attempts).toBe(2);
+    expect(t.corrections).toEqual([{ time: BASE, open: 100, high: 130, low: 95, close: 98, volume: 7.5 }]);
+    expect(t.events).toContainEqual(expect.objectContaining({ type: 'reconcile-retry', attempt: 1, reason: 'temporary network failure' }));
+  });
+  it('reports a reconciliation failure after bounded retries', async () => {
+    let attempts = 0;
+    const t = setup({
+      reconcileDelayMs: 1, reconcileRetryMs: 1, reconcileAttempts: 2,
+      fetchFn: async () => { attempts++; throw new TypeError('REST unavailable'); },
+    });
+    t.send(lastMatch(0));
+    t.send(match(1, 10, 100, 1));
+    t.send(match(2, 61, 110, 1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(attempts).toBe(2);
+    expect(t.events).toContainEqual(expect.objectContaining({ type: 'reconcile-failed', attempts: 2, reason: 'REST unavailable' }));
+    expect(t.resyncs).toEqual([]);
   });
   it('is off when reconcileDelayMs is null', async () => {
     const t = setup({ reconcileDelayMs: null, candles: [[BASE, 1, 2, 1, 2, 9]] });

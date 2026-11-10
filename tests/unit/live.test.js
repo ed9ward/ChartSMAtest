@@ -15,8 +15,10 @@ describe('parseKline', () => {
   it.each([[null], [undefined], [[]], [[1, 2]], ['x'], [{}]])('rejects %j', (row) => {
     expect(parseKline(row)).toBeNull();
   });
-  it('garbage numbers become NaN so the sanitizer can drop them', () => {
-    expect(parseKline([1000, 'abc', '1', '1', '1', '1']).open).toBeNaN();
+  it('rejects coercible values and misaligned timestamps', () => {
+    for (const value of [null, '', '   ', false, {}, [], '0x10', 'NaN']) expect(parseKline([1794324480000, value, '2', '0.5', '1.5', '3'], '1m')).toBeNull();
+    for (const time of [null, '', false, 'x', 1794324480000.5, -1000, 1794324480001]) expect(parseKline([time, '1', '2', '0.5', '1.5', '3'], '1m')).toBeNull();
+    expect(parseKline([1794324480000, '1', '2', '0.5', '1.5', '3'], '1m')).not.toBeNull();
   });
 });
 
@@ -31,6 +33,11 @@ describe('parseKlineMessage', () => {
     expect(parseKlineMessage(JSON.stringify(msg()), ctx)).toEqual({
       candle: { time: 1794327420, open: 73484, high: 73510, low: 73482, close: 73500, volume: 2.5 }, closed: false,
     });
+  });
+  it('rejects null, blank, boolean and misaligned WebSocket fields', () => {
+    for (const value of [null, '', false, 'x']) expect(parseKlineMessage(msg({ o: value }), ctx)).toBeNull();
+    expect(parseKlineMessage(msg({ t: 1794327420001 }), ctx)).toBeNull();
+    expect(parseKlineMessage(msg({ t: 1794327480000 }), ctx)).not.toBeNull();
   });
   it('reports a closed kline', () => {
     expect(parseKlineMessage(msg({ x: true }), ctx).closed).toBe(true);
@@ -67,6 +74,7 @@ describe('fetchHistory', () => {
   it('drops rows that are not rows', async () => {
     const candles = await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => okResponse([RAW[0], null, 'x', RAW[1]]) });
     expect(candles).toHaveLength(2);
+    expect(candles.invalidCount).toBe(2);
   });
   describe('the limit contract', () => {
     const run = (limit, fetchFn = async () => okResponse(RAW)) => fetchHistory({ symbol: 'BTCUSDT', interval: '1m', limit, fetchFn });
