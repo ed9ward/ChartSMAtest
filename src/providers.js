@@ -18,6 +18,7 @@ export const PROVIDERS = {
     symbols: ['BTC-USD', 'ETH-USD', 'SOL-USD'],
     historyBars: 300,        // Coinbase allows 300 candles per request
     reloadOnBarGap: false,   // trades are tracked by id, so a minute without trades is just a minute without trades
+    sparseHistory: true,     // Coinbase publishes no candle for an interval with no ticks
     staleMs: 10_000,         // heartbeats come every second
     fetchHistory: coinbase.fetchHistory,
     openStream: coinbase.openStream,
