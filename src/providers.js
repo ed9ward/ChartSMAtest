@@ -9,6 +9,7 @@ export const PROVIDERS = {
     historyBars: 1000,       // Binance allows 1000 candles per request: the most history for EMA and RSI to settle on
     reloadOnBarGap: true,    // a bar that starts later than the next one may mean lost messages: take the history again
     staleMs: 30_000,         // no message at all for this long: the connection is dead (kline updates come every ~2 s)
+    maxConnectionMs: 23 * 60 * 60 * 1000 + 50 * 60 * 1000, // rotate before Binance's 24-hour connection lifetime
     fetchHistory: binance.fetchHistory,
     openStream: binance.openStream,
   },
