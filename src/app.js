@@ -383,7 +383,7 @@ async function loadLive({ auto = false } = {}) {
     const history = await provider.fetchHistory({ symbol, interval, limit: provider.historyBars });
     if (gen !== live.gen) return;
     live.loading = false;
-    ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history, INTERVAL_SECONDS[interval]));
+    ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history, INTERVAL_SECONDS[interval], { allowSparse: provider.sparseHistory }));
     render();
     touch();
     Object.assign(live, { symbol, provider, lastActivity: Date.now(), connectedAt: Date.now() });
