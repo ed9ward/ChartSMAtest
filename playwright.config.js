@@ -10,7 +10,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: ci,
   retries: 0, // a flaky test must fail loudly, not pass on the second try
-  workers: ci ? 2 : undefined, // locally: half of the CPU cores
+  workers: ci ? 4 : undefined, // CI runners have 4 cores; locally: half of the CPU cores
   reporter: ci ? [['list'], ['github'], ['html', { open: 'never' }]] : [['list']], // 'github' puts failures into the run's annotations
   use: {
     baseURL: 'http://localhost:4173',
