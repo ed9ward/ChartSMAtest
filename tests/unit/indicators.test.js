@@ -283,7 +283,7 @@ describe('parameters and dispatch', () => {
 
 // Calculated outside JavaScript (Python, Decimal) from 50 real BTCUSDT 1m bars, 2026-11-10 15:28..16:17 UTC.
 describe('golden values on real BTCUSDT data', () => {
-  const real = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url))).map(parseKline);
+  const real = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url))).map((row) => parseKline(row));
   const last = (pts, back = 0) => pts[pts.length - 1 - back].value;
 
   it('EMA, first value as start: 20 / 5 / first point / 16:16 UTC (pandas ewm and an exact Decimal calculation agree)', () => {

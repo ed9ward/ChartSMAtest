@@ -54,7 +54,7 @@ export const MUTANTS = [
   { id: 'feed-partial-high-wrong', file: 'src/generator.js', from: 'high: f === 1 ? final.high : round2(top + (final.high - finalTop) * f),', to: 'high: f === 1 ? final.high : round2(top - 5),' },
 
   // --- Binance ------------------------------------------------------------------
-  { id: 'binance-time-not-in-seconds', file: 'src/live.js', from: 'time: Number(row[0]) / 1000,', to: 'time: Number(row[0]),' },
+  { id: 'binance-time-not-in-seconds', file: 'src/live.js', from: 'parseBucketTimestamp(row[0], 1000, intervalSeconds)', to: 'parseBucketTimestamp(row[0], 1, intervalSeconds)' },
   { id: 'binance-limit-not-capped', file: 'src/live.js', from: '&limit=${Math.min(limit, MAX_KLINES)}', to: '&limit=${limit}' },
   { id: 'binance-http-errors-ignored', file: 'src/live.js', from: 'if (!res.ok) throw new Error(`HTTP ${res.status}`);', to: '' },
   { id: 'binance-foreign-symbol-accepted', file: 'src/live.js', from: 'if (symbol && String(k.s).toUpperCase() !== symbol.toUpperCase()) return null;', to: '' },
@@ -65,16 +65,16 @@ export const MUTANTS = [
   { id: 'coinbase-one-heartbeat-is-enough', file: 'src/coinbase.js', from: 'if (++behind >= 2) {', to: 'if (++behind >= 1) {' },
   { id: 'coinbase-duplicates-not-found', file: 'src/coinbase.js', from: 'if (trade.tradeId <= lastId || ahead.has(trade.tradeId))', to: 'if (false)' },
   { id: 'coinbase-last-lost-trade-not-fetched', file: 'src/coinbase.js', from: 'for (let id = lastId + 1; id <= target; id++) {', to: 'for (let id = lastId + 1; id < target; id++) {' },
-  { id: 'coinbase-last-match-counted', file: 'src/coinbase.js', from: 'if (!trade.last) apply(trade);', to: 'apply(trade);' },
+  { id: 'coinbase-last-match-counted', file: 'src/coinbase.js', from: 'if (!trade.last || (current && bucket > current.time) || (!current && applyLastMatchWhenUnseeded)) apply(trade);', to: 'if (true) apply(trade);' },
   { id: 'coinbase-held-back-trades-never-applied', file: 'src/coinbase.js', from: '      apply(trade);\n      lastId = trade.tradeId;\n      drain();\n      return;', to: '      apply(trade);\n      lastId = trade.tradeId;\n      return;' },
   { id: 'coinbase-goes-on-after-giving-up', file: 'src/coinbase.js', from: '      gaveUp = true;\n', to: '' },
   { id: 'coinbase-closed-candles-not-checked', file: 'src/coinbase.js', from: 'if (current && reconcileDelayMs !== null) reconcile({ ...current });', to: '' },
-  { id: 'coinbase-every-closed-candle-corrected', file: 'src/coinbase.js', from: 'if (exact && !closedByUs && !sameCandle(exact, closed))', to: 'if (exact && !closedByUs)' },
+  { id: 'coinbase-every-closed-candle-corrected', file: 'src/coinbase.js', from: 'if (!sameCandle(exact, closed)) onKline({ candle: exact, correction: true });', to: 'if (true) onKline({ candle: exact, correction: true });' },
   { id: 'coinbase-trades-of-closed-candles-applied', file: 'src/coinbase.js', from: '    if (current && bucket < current.time) return; // belongs to a candle that is already closed\n', to: '' },
   { id: 'coinbase-wrong-channel', file: 'src/coinbase.js', from: "{ name: 'matches', product_ids: [symbol] }", to: "{ name: 'ticker', product_ids: [symbol] }" },
-  { id: 'coinbase-null-is-a-number', file: 'src/coinbase.js', from: "const toNumber = (x) => (typeof x === 'number' ? x : typeof x === 'string' && x.trim() !== '' ? Number(x) : NaN);", to: 'const toNumber = (x) => Number(x);' },
+  { id: 'coinbase-null-is-a-number', file: 'src/coinbase.js', from: 'const toNumber = (x) => parseFiniteNumber(x) ?? NaN;', to: 'const toNumber = (x) => Number(x);' },
   { id: 'coinbase-limit-ignored', file: 'src/coinbase.js', from: 'return candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));', to: 'return candles;' },
-  { id: 'coinbase-history-not-sorted', file: 'src/coinbase.js', from: '.filter(Boolean).sort((a, b) => a.time - b.time);', to: '.filter(Boolean);' },
+  { id: 'coinbase-history-not-sorted', file: 'src/coinbase.js', from: 'candles.sort((a, b) => a.time - b.time);', to: 'candles.sort(() => 0);' },
 
   // --- the page: what the user sees and the connection ---------------------------
   { id: 'page-stale-answers-accepted', file: 'src/app.js', from: 'limit: provider.historyBars });\n    if (gen !== live.gen) return;', to: 'limit: provider.historyBars });', ui: U('superseded', EXCHANGES) },

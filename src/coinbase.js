@@ -45,9 +45,10 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
     if (candle) candles.push(candle);
     else invalidCount++;
   }
-  candles.invalidCount = invalidCount;
   candles.sort((a, b) => a.time - b.time);
-  return candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
+  const result = candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
+  result.invalidCount = invalidCount;
+  return result;
 }
 
 // --- trades ----------------------------------------------------------------

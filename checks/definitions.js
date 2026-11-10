@@ -391,7 +391,7 @@ function binanceGroup(ctx) {
         equal(parseKline(row), { time: 1794324480, open: 74258, high: 74259.3, low: 74126.64, close: 74132.1, volume: 15.78972 });
       }),
       c('all 50 real rows parse into finite candles with 60 s spacing', async () => {
-        const cs = (await ctx.realRows()).map(parseKline);
+        const cs = (await ctx.realRows()).map((row) => parseKline(row));
         equal(cs.length, 50);
         cs.forEach((x, i) => {
           assert([x.time, x.open, x.high, x.low, x.close, x.volume].every(Number.isFinite), `row ${i} is not finite`);

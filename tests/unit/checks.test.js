@@ -8,7 +8,7 @@ import { parseKline } from '../../src/live.js';
 
 const rows = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url)));
 const talib = JSON.parse(readFileSync(new URL('../fixtures/talib-reference.json', import.meta.url)));
-const ctx = { realRows: async () => rows, realCandles: async () => rows.map(parseKline), talibReference: async () => talib };
+const ctx = { realRows: async () => rows, realCandles: async () => rows.map((row) => parseKline(row)), talibReference: async () => talib };
 
 describe('the in-page check suite (everything that does not need a browser)', () => {
   it('has the expected groups', () => {
@@ -26,7 +26,7 @@ describe('the in-page check suite (everything that does not need a browser)', ()
   });
 
   it('the real-data checks really compare: tampered candles make them fail for every indicator', async () => {
-    const tampered = rows.map(parseKline).map((c, i) => { const d = (i % 3) * 37; return { ...c, open: c.open + d, high: c.high + d, low: c.low + d, close: c.close + d }; }); // RSI ignores a constant shift, so shift bars differently
+    const tampered = rows.map((row) => parseKline(row)).map((c, i) => { const d = (i % 3) * 37; return { ...c, open: c.open + d, high: c.high + d, low: c.low + d, close: c.close + d }; }); // RSI ignores a constant shift, so shift bars differently
     const summary = await runChecks(buildGroups({ ...ctx, realCandles: async () => tampered }), { include: (c) => !c.ui });
     const failedByGroup = Object.fromEntries(summary.groups.map((g) => [g.id, g.failed]));
     for (const id of ['sma', 'ema', 'bb', 'rsi']) expect(failedByGroup[id], id).toBe(1); // only the golden check

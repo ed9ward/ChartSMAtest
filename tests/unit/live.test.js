@@ -65,9 +65,9 @@ describe('fetchHistory', () => {
   it('asks for the right url and returns candles', async () => {
     let url;
     const candles = await fetchHistory({
-      symbol: 'BTCUSDT', interval: '5m', limit: 50, fetchFn: async (u) => { url = u; return okResponse(RAW); },
+      symbol: 'BTCUSDT', interval: '1m', limit: 50, fetchFn: async (u) => { url = u; return okResponse(RAW); },
     });
-    expect(url).toBe('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=50');
+    expect(url).toBe('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=50');
     expect(candles).toHaveLength(50);
     expect(candles.at(-1).time).toBe(1794327420);
   });
@@ -165,7 +165,7 @@ describe('timeframes', () => {
 // Expected values were calculated outside JavaScript (Python, Decimal) from the same 50 real BTCUSDT 1m bars.
 // 2026-11-10 15:28 UTC .. 16:17 UTC. Compare the last ones with TradingView (BINANCE:BTCUSDT, 1m).
 describe('golden SMA values on real BTCUSDT data', () => {
-  const candles = RAW.map(parseKline);
+  const candles = RAW.map((row) => parseKline(row));
   const last = (period, source) => computeSMA(candles, period, source).at(-1).value;
 
   it('close, period 20', () => expect(last(20, 'close')).toBeCloseTo(73310.6635, 6));

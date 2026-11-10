@@ -51,7 +51,9 @@ describe('fetchHistory', () => {
     expect(await fetchHistory({ symbol: 'BTC-USD', interval: '1m', limit: 500, fetchFn: async () => ok(many) })).toHaveLength(300);
   });
   it('drops broken rows; an empty answer is fine', async () => {
-    expect(await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ok([ROWS[0], null, 'x', [1]]) })).toHaveLength(1);
+    const partial = await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ok([ROWS[0], null, 'x', [1]]) });
+    expect(partial).toHaveLength(1);
+    expect(partial.invalidCount).toBe(3);
     expect(await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => ok([]) })).toEqual([]);
   });
   describe('the limit contract', () => {
@@ -250,7 +252,7 @@ describe('stream: building candles from trades', () => {
     const t = setup({ seed: { time: BASE - 60, open: 90, high: 120, low: 80, close: 100, volume: 10 } });
     t.send(lastMatch(0));
     t.send(match(1, 5, 150));
-    expect(t.candles[0]).toEqual({ time: BASE, open: 150, high: 150, low: 150, close: 150, volume: 1 });
+    expect(t.candles[0]).toEqual({ time: BASE, open: 100, high: 150, low: 100, close: 150, volume: 2 });
   });
   it('a trade older than the candle under way is ignored (it belongs to a closed candle)', () => {
     const t = setup({ seed: { time: BASE + 60, open: 90, high: 120, low: 80, close: 100, volume: 10 } });
