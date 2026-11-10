@@ -1,6 +1,6 @@
 import { SOURCES } from './sma.js';
 import { INDICATORS, computeIndicator, validateParams, settleBars, minBars } from './indicators.js';
-import { sanitizeCandles, validateCandle } from './sanitize.js';
+import { sanitizeCandles, validateCandle, appendBoundedCandle } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
 import { INTERVAL_SECONDS, utcDay, dayChangePercent, formatPercent } from './live.js';
@@ -10,6 +10,7 @@ import { priceDecimals, formatFixed } from './format.js';
 const { createChart, CandlestickSeries, LineSeries } = window.LightweightCharts;
 
 const STREAM_INTERVAL_MS = 200;
+const MAX_LIVE_CANDLES = 1000;
 const STREAMABLE = new Set(['normal', 'long', 'empty']); // data sets that are a prefix of the feed
 // Demo switch so the tests can prove they catch a broken indicator: ?bug=offbyone
 const BUG = new URLSearchParams(location.search).get('bug');
@@ -36,7 +37,7 @@ const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const RETRY_BASE_MS = 1000;   // first attempt after a second, then 2, 4, 8, 16, 30, 30, ...
 const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 10_000;     // a connection that lived this long counts as healthy: the next loss starts again at one second
-const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, closedThrough: null, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 
@@ -69,6 +70,7 @@ function showStatus() {
     live.duplicates && `ignored ${live.duplicates} duplicate message(s)`,
     live.recovered && `recovered ${live.recovered} missed trade(s)`,
     live.corrected && `corrected ${live.corrected} candle(s) from the exchange`,
+    live.reconcileFailures && `could not verify ${live.reconcileFailures} closed candle(s)`,
     live.resyncs && `resynced ${live.resyncs} time(s)`,
   ];
   const text = [base, ...state.issues, ...notes].filter(Boolean).join('; ');
@@ -166,8 +168,9 @@ function render({ fit = true } = {}) {
 }
 
 // Incremental redraw of the newest bar (new bar or update of the forming one).
-function paintLast(candle) {
+function paintLast(candle, fullRedraw = false) {
   touch();
+  if (fullRedraw) { render({ fit: false }); return; }
   candleSeries.update(candle);
   const pts = points();
   for (const l of lines) {
@@ -346,7 +349,7 @@ function closeLive() {
   live.gen++; // any answer still in flight is now stale
   cancelRetry();
   live.conn?.close();
-  Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, resyncs: 0, prevClose: null, dayIndex: null });
+  Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, closedThrough: null, resyncs: 0, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
@@ -373,7 +376,7 @@ async function loadLive({ auto = false } = {}) {
     const history = await provider.fetchHistory({ symbol, interval, limit: provider.historyBars });
     if (gen !== live.gen) return;
     live.loading = false;
-    ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history));
+    ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history, INTERVAL_SECONDS[interval]));
     render();
     touch();
     Object.assign(live, { symbol, provider, lastActivity: Date.now(), connectedAt: Date.now() });
@@ -381,11 +384,12 @@ async function loadLive({ auto = false } = {}) {
     live.conn = provider.openStream({
       symbol, interval, seed: lastCandle(),
       onActivity: () => { if (gen === live.gen) live.lastActivity = Date.now(); },
-      onKline: ({ candle, correction }) => onLiveKline(gen, candle, interval, correction),
+      onKline: ({ candle, correction, closed }) => onLiveKline(gen, candle, interval, correction, closed),
       onEvent: ({ type, count }) => {
         if (gen !== live.gen) return;
         if (type === 'recovered') live.recovered += count;
         if (type === 'duplicate') live.duplicates++;
+        if (type === 'reconcile-failed') live.reconcileFailures++;
         showStatus();
       },
       // missed trades could not be fetched: take everything again, and say so
@@ -414,13 +418,14 @@ async function loadLive({ auto = false } = {}) {
   }
 }
 
-function onLiveKline(gen, candle, interval, correction = false) {
+function onLiveKline(gen, candle, interval, correction = false, closed = false) {
   if (gen !== live.gen) return;
   if (validateCandle(candle)) { // the same rule as for the history
     live.rejected++;
     showStatus();
     return;
   }
+  if (live.provider === PROVIDERS.binance && !closed && live.closedThrough !== null && candle.time <= live.closedThrough) return;
   if (correction) { // the exchange's final version of a candle that has already closed
     const index = state.candles.findLastIndex((c) => c.time === candle.time);
     if (index < 0) return;
@@ -436,18 +441,22 @@ function onLiveKline(gen, candle, interval, correction = false) {
     loadDay(gen, live.provider, live.symbol, interval);
   }
   const last = lastCandle();
+  let trimmed = false;
   if (!last || candle.time === last.time) {
     if (last) state.candles[state.candles.length - 1] = candle;
-    else state.candles.push(candle);
+    else trimmed = appendBoundedCandle(state.candles, candle, MAX_LIVE_CANDLES);
   } else if (candle.time > last.time + INTERVAL_SECONDS[interval] && live.provider.reloadOnBarGap) {
-    loadLive(); // bars may have been missed (sleep, network): take the history again
+    loadLive(); // Binance bars may have been missed (sleep, network): take the history again
     return;
   } else if (candle.time > last.time) {
-    state.candles.push(candle);
+    trimmed = appendBoundedCandle(state.candles, candle, MAX_LIVE_CANDLES);
   } else {
     return; // older than what we already have
   }
-  paintLast(candle);
+  if (closed && live.provider === PROVIDERS.binance) {
+    live.closedThrough = Math.max(live.closedThrough ?? -Infinity, candle.time);
+  }
+  paintLast(candle, trimmed);
 }
 
 // --- wiring ----------------------------------------------------------------

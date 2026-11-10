@@ -42,3 +42,11 @@ To compare with TradingView: `BINANCE:BTCUSDT`, 1m, SMA length 20, source close,
 ## Live demo
 
 GitHub Pages serves the repo root: https://ed9ward.github.io/ChartSMAtest/
+
+## Live data integrity
+
+Binance and Coinbase REST/WebSocket messages are parsed strictly: numeric fields must be finite, timestamps must use the expected unit and align to the selected candle interval, and malformed rows are counted instead of being silently coerced. Historical gaps in REST candle series are reported independently of malformed rows; misaligned candles are rejected. Live Coinbase intervals without trades are normal and do not trigger a reload or a warning.
+
+Coinbase live candles use the `matches` and `heartbeat` channels. Missed trades are recovered through the public REST Trades endpoint; if the missing range is no longer in the latest 1,000-trade response, the app performs a full history resync. Closed candles are checked against REST with bounded retries. Because REST candle rows do not include trade IDs, a `last_match` inside the same bucket as the history seed is not added twice; the exchange's final candle is reconciled after the bucket closes.
+
+Live chart history is capped at 1,000 candles. Trimming old bars redraws the series without resetting the user's zoom.

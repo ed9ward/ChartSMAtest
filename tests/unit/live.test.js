@@ -15,8 +15,10 @@ describe('parseKline', () => {
   it.each([[null], [undefined], [[]], [[1, 2]], ['x'], [{}]])('rejects %j', (row) => {
     expect(parseKline(row)).toBeNull();
   });
-  it('garbage numbers become NaN so the sanitizer can drop them', () => {
-    expect(parseKline([1000, 'abc', '1', '1', '1', '1']).open).toBeNaN();
+  it('rejects coercible values and misaligned timestamps', () => {
+    for (const value of [null, '', '   ', false, {}, [], '0x10', 'NaN']) expect(parseKline([1794324480000, value, '2', '0.5', '1.5', '3'], '1m')).toBeNull();
+    for (const time of [null, '', false, 'x', 1794324480000.5, -1000, 1794324480001]) expect(parseKline([time, '1', '2', '0.5', '1.5', '3'], '1m')).toBeNull();
+    expect(parseKline([1794324480000, '1', '2', '0.5', '1.5', '3'], '1m')).not.toBeNull();
   });
 });
 
@@ -31,6 +33,11 @@ describe('parseKlineMessage', () => {
     expect(parseKlineMessage(JSON.stringify(msg()), ctx)).toEqual({
       candle: { time: 1794327420, open: 73484, high: 73510, low: 73482, close: 73500, volume: 2.5 }, closed: false,
     });
+  });
+  it('rejects null, blank, boolean and misaligned WebSocket fields', () => {
+    for (const value of [null, '', false, 'x']) expect(parseKlineMessage(msg({ o: value }), ctx)).toBeNull();
+    expect(parseKlineMessage(msg({ t: 1794327420001 }), ctx)).toBeNull();
+    expect(parseKlineMessage(msg({ t: 1794327480000 }), ctx)).not.toBeNull();
   });
   it('reports a closed kline', () => {
     expect(parseKlineMessage(msg({ x: true }), ctx).closed).toBe(true);
@@ -58,15 +65,16 @@ describe('fetchHistory', () => {
   it('asks for the right url and returns candles', async () => {
     let url;
     const candles = await fetchHistory({
-      symbol: 'BTCUSDT', interval: '5m', limit: 50, fetchFn: async (u) => { url = u; return okResponse(RAW); },
+      symbol: 'BTCUSDT', interval: '1m', limit: 50, fetchFn: async (u) => { url = u; return okResponse(RAW); },
     });
-    expect(url).toBe('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=50');
+    expect(url).toBe('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=50');
     expect(candles).toHaveLength(50);
     expect(candles.at(-1).time).toBe(1794327420);
   });
   it('drops rows that are not rows', async () => {
     const candles = await fetchHistory({ symbol: 'X', interval: '1m', fetchFn: async () => okResponse([RAW[0], null, 'x', RAW[1]]) });
     expect(candles).toHaveLength(2);
+    expect(candles.invalidCount).toBe(2);
   });
   describe('the limit contract', () => {
     const run = (limit, fetchFn = async () => okResponse(RAW)) => fetchHistory({ symbol: 'BTCUSDT', interval: '1m', limit, fetchFn });
@@ -117,7 +125,7 @@ describe('openStream', () => {
     constructor(url) { this.url = url; this.closed = false; FakeWS.last = this; }
     close() { this.closed = true; }
   }
-  const kline = (over = {}) => JSON.stringify({ e: 'kline', s: 'BTCUSDT', k: { t: 1000, s: 'BTCUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: false, ...over } });
+  const kline = (over = {}) => JSON.stringify({ e: 'kline', s: 'BTCUSDT', k: { t: 60000, s: 'BTCUSDT', i: '1m', o: '1', h: '2', l: '0.5', c: '1.5', v: '3', x: false, ...over } });
 
   it('connects to the lower-cased stream name', () => {
     openStream({ symbol: 'BTCUSDT', interval: '1h', onKline() {}, WS: FakeWS });
@@ -157,7 +165,7 @@ describe('timeframes', () => {
 // Expected values were calculated outside JavaScript (Python, Decimal) from the same 50 real BTCUSDT 1m bars.
 // 2026-11-10 15:28 UTC .. 16:17 UTC. Compare the last ones with TradingView (BINANCE:BTCUSDT, 1m).
 describe('golden SMA values on real BTCUSDT data', () => {
-  const candles = RAW.map(parseKline);
+  const candles = RAW.map((row) => parseKline(row));
   const last = (period, source) => computeSMA(candles, period, source).at(-1).value;
 
   it('close, period 20', () => expect(last(20, 'close')).toBeCloseTo(73310.6635, 6));

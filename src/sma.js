@@ -27,22 +27,32 @@ export function assertPeriod(period) {
   }
 }
 
-// Full SMA series as chart points {time, value}; a window with a non-finite value
-// (NaN, null, Infinity) or an overflowing sum produces no point.
+// Rolling-window SMA: O(n) instead of recalculating every window in O(n * period).
+// Invalid values invalidate only windows that contain them. If a finite input window
+// overflows its sum, recompute it when it becomes eligible again after the bad value leaves.
 export function computeSMA(candles, period, source = 'close') {
   assertPeriod(period);
   sourceValue(candles[0] ?? {}, source); // validate source name early
   const out = [];
-  for (let end = period - 1; end < candles.length; end++) {
-    let sum = 0;
-    let valid = true;
-    for (let i = end - period + 1; i <= end && valid; i++) {
-      const v = sourceValue(candles[i], source);
-      if (typeof v !== 'number' || !Number.isFinite(v)) valid = false;
-      else sum += v;
+  const window = new Array(period);
+  let sum = 0;
+  let invalid = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const slot = i % period;
+    if (i >= period) {
+      const previous = window[slot];
+      if (previous === null) invalid--;
+      else sum -= previous;
     }
-    const value = sum / period;
-    if (valid && Number.isFinite(value)) out.push({ time: candles[end].time, value });
+    const value = sourceValue(candles[i], source);
+    window[slot] = typeof value === 'number' && Number.isFinite(value) ? value : null;
+    if (window[slot] === null) invalid++;
+    else sum += window[slot];
+
+    if (i < period - 1 || invalid > 0) continue;
+    if (!Number.isFinite(sum)) sum = window.reduce((total, v) => total + v, 0);
+    const average = sum / period;
+    if (Number.isFinite(average)) out.push({ time: candles[i].time, value: average });
   }
   return out;
 }

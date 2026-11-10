@@ -1,22 +1,21 @@
 // Binance public market data (no API key): REST history + WebSocket kline stream.
 
 import { assertLimit } from './limit.js';
+import { parseFiniteNumber, parseBucketTimestamp } from './parse.js';
 
 export const INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 export const KLINES_URL = 'https://api.binance.com/api/v3/klines';
 export const WS_URL = 'wss://stream.binance.com:9443/ws';
 
 // REST row: [openTime, open, high, low, close, volume, closeTime, ...] (numbers come as strings)
-export function parseKline(row) {
+export function parseKline(row, interval = null) {
   if (!Array.isArray(row) || row.length < 6) return null;
-  return {
-    time: Number(row[0]) / 1000,
-    open: Number(row[1]),
-    high: Number(row[2]),
-    low: Number(row[3]),
-    close: Number(row[4]),
-    volume: Number(row[5]),
-  };
+  const intervalSeconds = interval === null ? null : INTERVAL_SECONDS[interval];
+  if (interval !== null && !intervalSeconds) return null;
+  const time = parseBucketTimestamp(row[0], 1000, intervalSeconds);
+  const [open, high, low, close, volume] = row.slice(1, 6).map(parseFiniteNumber);
+  if (time === null || [open, high, low, close, volume].some((v) => v === null)) return null;
+  return { time, open, high, low, close, volume };
 }
 
 // WebSocket message: {"e":"kline","s":"BTCUSDT","k":{"t":..,"i":"1m","o":..,"h":..,"l":..,"c":..,"v":..,"x":false}}
@@ -30,10 +29,12 @@ export function parseKlineMessage(data, { symbol, interval } = {}) {
   if (msg?.e !== 'kline' || !k) return null;
   if (symbol && String(k.s).toUpperCase() !== symbol.toUpperCase()) return null;
   if (interval && k.i !== interval) return null;
-  const candle = {
-    time: Number(k.t) / 1000, open: Number(k.o), high: Number(k.h), low: Number(k.l), close: Number(k.c), volume: Number(k.v),
-  };
-  return { candle, closed: k.x === true };
+  const intervalSeconds = interval === undefined ? null : INTERVAL_SECONDS[interval];
+  if (interval !== undefined && !intervalSeconds) return null;
+  const time = parseBucketTimestamp(k.t, 1000, intervalSeconds);
+  const [open, high, low, close, volume] = [k.o, k.h, k.l, k.c, k.v].map(parseFiniteNumber);
+  if (time === null || [open, high, low, close, volume].some((v) => v === null)) return null;
+  return { candle: { time, open, high, low, close, volume }, closed: k.x === true };
 }
 
 export const MAX_KLINES = 1000; // per request
@@ -47,7 +48,16 @@ export async function fetchHistory({ symbol, interval, limit = 500, signal, fetc
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
   if (!Array.isArray(body)) throw new Error(body?.msg || 'unexpected response');
-  return body.map(parseKline).filter(Boolean);
+  const candles = [];
+  let invalidCount = 0;
+  for (const row of body) {
+    const candle = parseKline(row, interval);
+    if (candle) candles.push(candle);
+    else invalidCount++;
+  }
+  if (invalidCount) candles.invalidCount = invalidCount;
+  candles.sort((a, b) => a.time - b.time);
+  return candles;
 }
 
 /** Opens the kline stream. onClose fires only when the connection ends without close() being called. */

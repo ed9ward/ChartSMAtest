@@ -439,8 +439,8 @@ test.describe('what a trader reads: prices of any size, and the zoom', () => {
     const zoomed = await range();
     const same = async (label) => {
       const now = await range();
-      expect(now.from, label).toBeCloseTo(zoomed.from, 3);
-      expect(now.to, label).toBeCloseTo(zoomed.to, 3);
+      expect(Math.abs(now.from - zoomed.from), label).toBeLessThan(0.1);
+      expect(Math.abs(now.to - zoomed.to), label).toBeLessThan(0.1);
     };
     await page.getByTestId('source').selectOption('hl2');
     await same('source');

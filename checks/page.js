@@ -75,7 +75,7 @@ async function run() {
   let failed = 0;
 
   try {
-    const ctx = { realRows, talibReference, realCandles: async () => (await realRows()).map(parseKline) };
+    const ctx = { realRows, talibReference, realCandles: async () => (await realRows()).map((row) => parseKline(row)) };
     if (withUi) ctx.ui = await createUiDriver($('app')).load(bug ? `?bug=${encodeURIComponent(bug)}` : '');
 
     const summary = await runChecks(buildGroups(ctx), {

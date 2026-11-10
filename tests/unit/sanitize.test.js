@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeCandles, validateCandle, MAX_ABS_PRICE } from '../../src/sanitize.js';
+import { sanitizeCandles, validateCandle, MAX_ABS_PRICE, appendBoundedCandle } from '../../src/sanitize.js';
 import { generateCandles } from '../../src/generator.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 
@@ -44,6 +44,62 @@ describe('sanitizeCandles', () => {
     const r = sanitizeCandles(input);
     expect(r.candles).toEqual([]);
     expect(r.issues.length).toBeGreaterThan(0);
+  });
+  it('keeps only the newest bounded number of candles and reports trimming', () => {
+    const bars = [{ time: 1 }, { time: 2 }, { time: 3 }];
+    expect(appendBoundedCandle(bars, { time: 4 }, 3)).toBe(true);
+    expect(bars.map((bar) => bar.time)).toEqual([2, 3, 4]);
+    expect(appendBoundedCandle(bars, { time: 5 }, 3)).toBe(true);
+    expect(bars.map((bar) => bar.time)).toEqual([3, 4, 5]);
+    expect(appendBoundedCandle(bars, { time: 6 }, 4)).toBe(false);
+    expect(bars.map((bar) => bar.time)).toEqual([3, 4, 5, 6]);
+  });
+  it('rejects invalid history limits', () => {
+    for (const limit of [0, -1, 1.5, NaN, Infinity, '3']) {
+      expect(() => appendBoundedCandle([], { time: 1 }, limit)).toThrow(RangeError);
+    }
+  });
+  it('reports missing candle intervals without inventing synthetic bars', () => {
+    const data = [
+      { time: 0, open: 10, high: 10, low: 10, close: 10, volume: 1 },
+      { time: 60, open: 11, high: 11, low: 11, close: 11, volume: 1 },
+      { time: 240, open: 12, high: 12, low: 12, close: 12, volume: 1 },
+    ];
+    const r = sanitizeCandles(data, 60);
+    expect(r.candles).toEqual(data);
+    expect(r.issues).toEqual(['source omitted 2 candle interval(s); indicators use returned candles only']);
+  });
+  it('reports gaps even when malformed rows were also dropped', () => {
+    const data = [
+      { time: 0, open: 10, high: 10, low: 10, close: 10, volume: 1 },
+      { time: 60, open: 11, high: 11, low: 11, close: 11, volume: 1 },
+      { time: 120, open: NaN, high: 12, low: 12, close: 12, volume: 1 },
+      { time: 240, open: 12, high: 12, low: 12, close: 12, volume: 1 },
+    ];
+    const r = sanitizeCandles(data, 60);
+    expect(r.candles.map((c) => c.time)).toEqual([0, 60, 240]);
+    expect(r.issues).toEqual([
+      'dropped 1 invalid candle(s)',
+      'source omitted 2 candle interval(s); indicators use returned candles only',
+    ]);
+  });
+  it('drops candles that are not aligned to the selected timeframe', () => {
+    const data = [
+      { time: 0, open: 10, high: 10, low: 10, close: 10, volume: 1 },
+      { time: 61, open: 11, high: 11, low: 11, close: 11, volume: 1 },
+      { time: 120, open: 12, high: 12, low: 12, close: 12, volume: 1 },
+    ];
+    const r = sanitizeCandles(data, 60);
+    expect(r.candles.map((c) => c.time)).toEqual([0, 120]);
+    expect(r.issues).toEqual([
+      'dropped 1 invalid candle(s)',
+      'source omitted 1 candle interval(s); indicators use returned candles only',
+    ]);
+  });
+  it('rejects invalid intervals for gap detection', () => {
+    for (const interval of [0, -60, 1.5, NaN, Infinity, '60']) {
+      expect(() => sanitizeCandles(good, interval)).toThrow(RangeError);
+    }
   });
   it('drops candles with garbage entries inside the array', () => {
     const r = sanitizeCandles([good[0], null, 5, { time: 'a' }, good[1]]);
