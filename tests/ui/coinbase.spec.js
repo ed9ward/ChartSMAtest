@@ -197,7 +197,7 @@ test.describe('Coinbase impossible candles', () => {
     const mock = await mockCoinbase(page, () => ({ body: rows }));
     await goLive(page, mock);
     await expect(page.getByTestId('bar-count')).toHaveText('48');
-    await expect(status(page)).toHaveText('Live BTC-USD 1m; dropped 2 inconsistent candle(s) (impossible high/low or negative volume)');
+    await expect(status(page)).toHaveText('Live BTC-USD 1m; dropped 2 inconsistent candle(s) (impossible high/low or negative volume); source omitted 2 candle interval(s); indicators use returned candles only');
   });
 });
 
