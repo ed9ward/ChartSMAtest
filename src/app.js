@@ -32,7 +32,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
 
 const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
-const live = { gen: 0, conn: null, offline: false, error: null, rejected: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : '—');
@@ -56,8 +56,15 @@ const isOffline = () => stream.offlineSince !== null || live.offline;
 function showStatus() {
   if (isOffline()) return setStatus(live.error ? `Feed disconnected: ${live.error}` : 'Feed disconnected', true);
   const base = isLive() ? `Live ${el.symbol.value} ${el.interval.value}` : '';
-  const rejected = live.rejected ? `ignored ${live.rejected} invalid update(s)` : ''; // never drop live data silently
-  const text = [base, ...state.issues, rejected].filter(Boolean).join('; ');
+  // Nothing the live feed does to the data happens silently.
+  const notes = [
+    live.rejected && `ignored ${live.rejected} invalid update(s)`,
+    live.duplicates && `ignored ${live.duplicates} duplicate message(s)`,
+    live.recovered && `recovered ${live.recovered} missed trade(s)`,
+    live.corrected && `corrected ${live.corrected} candle(s) from the exchange`,
+    live.resyncs && `resynced ${live.resyncs} time(s)`,
+  ];
+  const text = [base, ...state.issues, ...notes].filter(Boolean).join('; ');
   setStatus(text || 'OK');
 }
 
@@ -255,7 +262,7 @@ function reconnect(missedTicks) {
 function closeLive() {
   live.gen++; // any answer still in flight is now stale
   live.conn?.close();
-  Object.assign(live, { conn: null, offline: false, error: null, rejected: 0, prevClose: null, dayIndex: null });
+  Object.assign(live, { conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, resyncs: 0, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
@@ -287,7 +294,20 @@ async function loadLive() {
     loadDay(gen, provider, symbol, interval);
     live.conn = provider.openStream({
       symbol, interval, seed: lastCandle(),
-      onKline: ({ candle }) => onLiveKline(gen, candle, interval),
+      onKline: ({ candle, correction }) => onLiveKline(gen, candle, interval, correction),
+      onEvent: ({ type, count }) => {
+        if (gen !== live.gen) return;
+        if (type === 'recovered') live.recovered += count;
+        if (type === 'duplicate') live.duplicates++;
+        showStatus();
+      },
+      // missed trades could not be fetched: take everything again, and say so
+      onResync: () => {
+        if (gen !== live.gen) return;
+        const resyncs = live.resyncs + 1;
+        loadLive();
+        live.resyncs = resyncs;
+      },
       onClose: () => { if (gen === live.gen) { live.conn = null; live.offline = true; showStatus(); } },
       onError: (message) => {
         if (gen !== live.gen) return;
@@ -305,10 +325,19 @@ async function loadLive() {
   }
 }
 
-function onLiveKline(gen, candle, interval) {
+function onLiveKline(gen, candle, interval, correction = false) {
   if (gen !== live.gen) return;
   if (validateCandle(candle)) { // the same rule as for the history
     live.rejected++;
+    showStatus();
+    return;
+  }
+  if (correction) { // the exchange's final version of a candle that has already closed
+    const index = state.candles.findLastIndex((c) => c.time === candle.time);
+    if (index < 0) return;
+    state.candles[index] = candle;
+    live.corrected++;
+    render();
     showStatus();
     return;
   }
@@ -384,6 +413,6 @@ window.__app = {
   state: () => ({
     indicator: state.indicator, source: state.source, period: state.period, mult: state.mult, scenario: state.scenario,
     bars: state.candles.length, streaming: stream.timer !== null, offline: isOffline(), ticks: stream.ticks,
-    live: isLive() && live.conn !== null, rejected: live.rejected, symbol: el.symbol.value, interval: el.interval.value,
+    live: isLive() && live.conn !== null, rejected: live.rejected, recovered: live.recovered, corrected: live.corrected, resyncs: live.resyncs, symbol: el.symbol.value, interval: el.interval.value,
   }),
 };

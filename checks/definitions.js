@@ -10,7 +10,7 @@ import { refSMA, refEMA, refBB, refRSI, compareSeries } from './reference.js';
 import { expectedBars } from './data.js';
 import { assert, equal, close, throws } from './assert.js';
 import { compareIndicator } from './compare.js';
-import { parseCandleRow, parseTicker, openStream as openCoinbaseStream, COINBASE_GRANULARITY } from '../src/coinbase.js';
+import { parseCandleRow, parseMatch, parseHeartbeat, openStream as openCoinbaseStream, COINBASE_GRANULARITY } from '../src/coinbase.js';
 
 const DATA = generateCandles({ seed: 42, count: 300 });
 const candle = (time, value) => ({ time, open: value, high: value, low: value, close: value, volume: 100 });
@@ -369,13 +369,20 @@ function coinbaseGroup() {
     send(text) { this.sent.push(JSON.parse(text)); }
     close() {}
   }
-  const tick = (time, price, size = 1) => ({ data: JSON.stringify({ type: 'ticker', product_id: 'BTC-USD', price: String(price), last_size: String(size), time: new Date(time * 1000).toISOString() }) });
-  const stream = (opts = {}) => {
-    const candles = [];
-    let socket;
-    openCoinbaseStream({ symbol: 'BTC-USD', interval: '1m', onKline: (k) => candles.push(k.candle), WS: class extends FakeSocket { constructor() { super(); socket = this; } }, ...opts });
-    return { candles, socket };
+  const T = Date.UTC(2026, 10, 10, 16, 34, 0) / 1000;
+  const iso = (s) => new Date((T + s) * 1000).toISOString();
+  const match = (id, s, price, size = 1, type = 'match') => ({ data: JSON.stringify({ type, product_id: 'BTC-USD', trade_id: id, price: String(price), size: String(size), time: iso(s) }) });
+  const stream = (restTrades = []) => {
+    const out = { candles: [], events: [], resyncs: [], socket: null };
+    openCoinbaseStream({
+      symbol: 'BTC-USD', interval: '1m', graceMs: 0, reconcileDelayMs: null,
+      WS: class extends FakeSocket { constructor() { super(); out.socket = this; } },
+      fetchFn: async () => ({ ok: true, status: 200, json: async () => restTrades }),
+      onKline: (k) => out.candles.push(k.candle), onEvent: (e) => out.events.push(e), onResync: (r) => out.resyncs.push(r),
+    });
+    return out;
   };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
   return {
     id: 'coinbase',
     title: 'Coinbase data format',
@@ -383,27 +390,56 @@ function coinbaseGroup() {
       c('a candle row [time, low, high, open, close, volume] becomes a candle', () =>
         equal(parseCandleRow([1700000000, '70', '75', '71', '74', '1.5']), { time: 1700000000, open: 71, high: 75, low: 70, close: 74, volume: 1.5 })),
       c('timeframes have the same lengths as on Binance', () => equal(COINBASE_GRANULARITY, INTERVAL_SECONDS)),
-      c('a ticker message is parsed; garbage, other products and bad numbers are ignored', () => {
-        const good = { type: 'ticker', product_id: 'BTC-USD', price: '73068.94', last_size: '0.25', time: '2026-11-10T16:34:51Z' };
-        equal(parseTicker(good, { symbol: 'BTC-USD' }), { price: 73068.94, size: 0.25, time: Date.parse('2026-11-10T16:34:51Z') / 1000 });
-        for (const bad of ['{nope', { ...good, product_id: 'ETH-USD' }, { ...good, price: 'x' }, { ...good, price: '0' }, { ...good, time: 'later' }, { type: 'heartbeat' }]) {
-          equal(parseTicker(bad, { symbol: 'BTC-USD' }), null);
+      c('a match and a heartbeat are parsed; garbage, other products, null and bad numbers are ignored', () => {
+        const good = { type: 'match', product_id: 'BTC-USD', trade_id: 7, price: '73068.94', size: '0.25', time: '2026-11-10T16:34:51Z' };
+        equal(parseMatch(good, { symbol: 'BTC-USD' }), { tradeId: 7, price: 73068.94, size: 0.25, time: Date.parse('2026-11-10T16:34:51Z') / 1000, last: false });
+        for (const bad of ['{nope', { ...good, product_id: 'ETH-USD' }, { ...good, price: 'x' }, { ...good, trade_id: null }, { ...good, size: null }, { ...good, time: 'later' }, { type: 'ticker' }]) {
+          equal(parseMatch(bad, { symbol: 'BTC-USD' }), null);
         }
+        equal(parseHeartbeat({ type: 'heartbeat', product_id: 'BTC-USD', last_trade_id: 20 }, { symbol: 'BTC-USD' }), { lastTradeId: 20 });
+        equal(parseHeartbeat({ type: 'heartbeat', product_id: 'BTC-USD', last_trade_id: null }, { symbol: 'BTC-USD' }), null);
       }),
       c('trades build candles: same minute updates, next minute opens a new one', () => {
         const { candles, socket } = stream();
-        const t = Date.UTC(2026, 10, 10, 16, 34, 0) / 1000;
-        socket.onmessage(tick(t + 5, 100, 1));
-        socket.onmessage(tick(t + 30, 105, 2));
-        socket.onmessage(tick(t + 40, 98, 1));
-        equal(candles.at(-1), { time: t, open: 100, high: 105, low: 98, close: 98, volume: 4 });
-        socket.onmessage(tick(t + 60, 110, 1));
-        equal(candles.at(-1), { time: t + 60, open: 110, high: 110, low: 110, close: 110, volume: 1 });
+        socket.onmessage(match(0, 0, 1, 1, 'last_match'));
+        socket.onmessage(match(1, 5, 100, 1));
+        socket.onmessage(match(2, 30, 105, 2));
+        socket.onmessage(match(3, 40, 98, 1));
+        equal(candles.at(-1), { time: T, open: 100, high: 105, low: 98, close: 98, volume: 4 });
+        socket.onmessage(match(4, 60, 110, 1));
+        equal(candles.at(-1), { time: T + 60, open: 110, high: 110, low: 110, close: 110, volume: 1 });
       }),
-      c('the stream subscribes to ticker and heartbeat when it opens', () => {
+      c('a repeated message is not counted twice', () => {
+        const { candles, socket, events } = stream();
+        socket.onmessage(match(0, 0, 1, 1, 'last_match'));
+        socket.onmessage(match(1, 5, 100, 2));
+        socket.onmessage(match(1, 5, 100, 2));
+        equal(candles.at(-1).volume, 2);
+        equal(events.map((e) => e.type), ['duplicate']);
+      }),
+      c('a lost trade is fetched from REST: its volume and its high are not missing', async () => {
+        const rest = [{ trade_id: 3, time: iso(20), price: '150', size: '4', side: 'buy' }, { trade_id: 2, time: iso(10), price: '101', size: '1', side: 'buy' }];
+        const { candles, socket, events, resyncs } = stream(rest);
+        socket.onmessage(match(0, 0, 1, 1, 'last_match'));
+        socket.onmessage(match(1, 5, 100, 1));
+        socket.onmessage(match(4, 30, 102, 2)); // 2 and 3 were lost
+        await settle();
+        equal(candles.at(-1), { time: T, open: 100, high: 150, low: 100, close: 102, volume: 8 });
+        equal(events.at(-1), { type: 'recovered', count: 2, upTo: 4 });
+        equal(resyncs, []);
+      }),
+      c('trades that cannot be fetched ask for a full reload instead of continuing with a hole', async () => {
+        const { socket, resyncs } = stream([]);
+        socket.onmessage(match(0, 0, 1, 1, 'last_match'));
+        socket.onmessage(match(1, 5, 100, 1));
+        socket.onmessage(match(3, 30, 102, 1));
+        await settle();
+        equal(resyncs.length, 1);
+      }),
+      c('the stream subscribes to matches and heartbeat when it opens', () => {
         const { socket } = stream();
         socket.onopen();
-        equal(socket.sent, [{ type: 'subscribe', channels: [{ name: 'ticker', product_ids: ['BTC-USD'] }, { name: 'heartbeat', product_ids: ['BTC-USD'] }] }]);
+        equal(socket.sent, [{ type: 'subscribe', channels: [{ name: 'matches', product_ids: ['BTC-USD'] }, { name: 'heartbeat', product_ids: ['BTC-USD'] }] }]);
       }),
     ],
   };
