@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { COINBASE_GRANULARITY, MAX_CANDLES, parseCandleRow, fetchHistory, parseMatch, parseHeartbeat, fetchTrades, openStream } from '../../src/coinbase.js';
+import { COINBASE_GRANULARITY, MAX_CANDLES, MAX_TRADES, parseCandleRow, fetchHistory, parseMatch, parseHeartbeat, fetchTrades, openStream } from '../../src/coinbase.js';
 import { INTERVAL_SECONDS } from '../../src/live.js';
 import { PROVIDERS } from '../../src/providers.js';
 import { validateCandle } from '../../src/sanitize.js';
