@@ -54,3 +54,17 @@ export function openStream({ symbol, interval, onKline, onClose, WS = WebSocket 
   ws.onclose = () => { if (!closedByUs) onClose?.(); };
   return { close() { closedByUs = true; ws.close(); } };
 }
+
+export const utcDay = (ms) => Math.floor(ms / 86400000);
+
+/** Change of `price` against the previous day's close, in percent (null when it cannot be calculated). */
+export function dayChangePercent(price, prevClose) {
+  if (![price, prevClose].every(Number.isFinite) || prevClose === 0) return null;
+  return ((price - prevClose) / prevClose) * 100;
+}
+
+export function formatPercent(percent) {
+  if (percent === null || !Number.isFinite(percent)) return '—';
+  if (Math.abs(percent) < 0.005) return '0.00%'; // never "-0.00%"
+  return `${percent > 0 ? '+' : ''}${percent.toFixed(2)}%`;
+}

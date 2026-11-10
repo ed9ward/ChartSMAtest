@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { test, expect, open, smaData, candleData, probeSmaLine, offsetFromExpected } from './fixtures.js';
+import { test, expect, open, smaData, candleData, expectLineAt } from './fixtures.js';
 import { refSMA, refEMA, refBB, refRSI, expectSeriesClose } from '../unit/helpers.js';
 
 // Real BTCUSDT 1m klines saved from Binance. Only the network is replaced; parsing, SMA and drawing are real.
@@ -21,13 +21,23 @@ const extend = (rows, n) => [...rows, ...Array.from({ length: n }, (_, j) => {
   return [base[0] + 60000 * (j + 1), base[1], base[2], base[3], base[4], base[5], 0, '0', 0, '0', '0', '0'];
 })];
 
-async function mockBinance(page, respond) {
-  const requests = [];
+// Two daily bars for the "change per day" figure: yesterday closed at 75800.
+const dailyRows = (prevClose = 75800) => [
+  [Date.UTC(2026, 10, 9), '74000', '76000', '73000', String(prevClose), '1000', 0, '0', 0, '0', '0', '0'],
+  [Date.UTC(2026, 10, 10), String(prevClose), '76500', '72900', '73488', '900', 0, '0', 0, '0', '0', '0'],
+];
+
+async function mockBinance(page, respond, { daily } = {}) {
+  const requests = [];       // history requests
+  const dailyRequests = [];  // the two-bar 1d requests behind the change-per-day figure
   const sockets = [];
   await page.route('https://api.binance.com/api/v3/klines*', async (route) => {
     const url = new URL(route.request().url());
-    requests.push(url);
-    const out = (await respond?.(url, requests.length)) ?? {};
+    const isDaily = url.searchParams.get('interval') === '1d' && url.searchParams.get('limit') === '2';
+    (isDaily ? dailyRequests : requests).push(url);
+    const out = (isDaily
+      ? await (daily?.(url, dailyRequests.length) ?? { body: dailyRows() })
+      : await respond?.(url, requests.length)) ?? {};
     if (out.abort) return route.abort();
     await route.fulfill({
       status: out.status ?? 200,
@@ -41,7 +51,7 @@ async function mockBinance(page, respond) {
     ws.onClose(() => { entry.closed = true; });
     sockets.push(entry);
   });
-  return { requests, sockets };
+  return { requests, dailyRequests, sockets };
 }
 
 async function goLive(page, mock, n = 1) {
@@ -86,7 +96,7 @@ test.describe('history', () => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
     // the chart finishes its layout a moment after the async data arrives
-    await expect.poll(async () => offsetFromExpected(await probeSmaLine(page))).toBeLessThanOrEqual(3);
+    await expectLineAt(page);
   });
 });
 
@@ -387,5 +397,136 @@ test.describe('other indicators on real data', () => {
         expectSeriesClose(await page.evaluate((k) => window.__app.lineData(k), key), points);
       }
     }
+  });
+});
+
+test.describe('update time and change per day', () => {
+  const NOW = new Date('2026-11-10T16:34:51Z');
+
+  test('demo data: the update time counts its age and refreshes on a tick; no day figure', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    await open(page);
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:51 (0 s ago)');
+    await page.clock.fastForward(5000);
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:51 (5 s ago)');
+    await page.evaluate(() => window.__app.step());
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:56 (0 s ago)');
+    await expect(page.getByTestId('day-change')).toBeHidden();
+  });
+
+  test('live data: time of the last update follows every tick', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:51 (0 s ago)');
+    await page.clock.fastForward(7000);
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:51 (7 s ago)');
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73500 }));
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:58 (0 s ago)');
+  });
+
+  test('ignored garbage does not count as an update', async ({ page }) => {
+    await page.clock.install({ time: NOW });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.clock.fastForward(4000);
+    mock.sockets[0].ws.send('not json');
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 'NaN', h: 1, l: 1, c: 1 }));
+    mock.sockets[0].ws.send(klineMsg({ t: T0 - 600000, o: 1, h: 1, l: 1, c: 1 }));
+    // a valid tick after them proves the garbage was processed
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73499 }));
+    await expect(page.getByTestId('last-close')).toHaveText('73499.00');
+    await expect(page.getByTestId('last-update')).toHaveText('16:34:55 (0 s ago)');
+  });
+
+  test('day change is taken against the previous day close and follows the price', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await expect(page.getByTestId('day-change')).toBeVisible();
+    await expect(page.getByTestId('day-change')).toHaveText('-3.05%'); // (73488 - 75800) / 75800
+    await expect(page.getByTestId('day-change')).toHaveClass('down');
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 76100, l: 73482, c: 76000 }));
+    await expect(page.getByTestId('day-change')).toHaveText('+0.26%');
+    await expect(page.getByTestId('day-change')).toHaveClass('up');
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 76100, l: 73482, c: 75800 }));
+    await expect(page.getByTestId('day-change')).toHaveText('0.00%');
+    await expect(page.getByTestId('day-change')).toHaveClass('');
+    expect(mock.dailyRequests).toHaveLength(1);
+    expect(mock.dailyRequests[0].search).toBe('?symbol=BTCUSDT&interval=1d&limit=2');
+  });
+
+  test('1d timeframe uses its own bars and asks for nothing extra', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.getByTestId('interval').selectOption('1d');
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1d');
+    // the mock returns the same 50 rows as "daily" bars: previous close 73484.01, last close 73488
+    await expect(page.getByTestId('day-change')).toHaveText('+0.01%');
+    expect(mock.dailyRequests).toHaveLength(1); // only from the first (1m) load
+    mock.sockets.at(-1).ws.send(klineMsg({ t: T0, o: 73484, h: 74000, l: 73000, c: 74000, i: '1d' }));
+    await expect(page.getByTestId('day-change')).toHaveText('+0.70%'); // (74000 - 73484.01) / 73484.01
+  });
+
+  test('timeframe and symbol changes ask for the previous close again', async ({ page }) => {
+    const mock = await mockBinance(page, undefined, { daily: (_, n) => ({ body: dailyRows(n === 1 ? 75800 : 70000) }) });
+    await goLive(page, mock);
+    await expect(page.getByTestId('day-change')).toHaveText('-3.05%');
+    await page.getByTestId('interval').selectOption('5m');
+    await expect.poll(() => mock.dailyRequests.length).toBe(2);
+    await expect(page.getByTestId('day-change')).toHaveText('+4.98%'); // (73488 - 70000) / 70000
+  });
+
+  test('a failing daily request only hides the figure', async ({ page, errors }) => {
+    const mock = await mockBinance(page, undefined, { daily: () => ({ status: 500, body: '' }) });
+    await goLive(page, mock);
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m');
+    await expect(page.getByTestId('day-change')).toHaveText('—');
+    await expect(page.getByTestId('bar-count')).toHaveText('50');
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73500 }));
+    await expect(page.getByTestId('last-close')).toHaveText('73500.00');
+    await expect(page.getByTestId('day-change')).toHaveText('—');
+    // the browser logs the failed request itself; nothing else (no uncaught error from the page) is allowed
+    expect(errors.filter((e) => !/Failed to load resource.*500/.test(e))).toEqual([]);
+    errors.length = 0;
+  });
+
+  test('a daily answer with one bar only gives no figure', async ({ page }) => {
+    const mock = await mockBinance(page, undefined, { daily: () => ({ body: dailyRows().slice(1) }) });
+    await goLive(page, mock);
+    await expect(page.getByTestId('day-change')).toHaveText('—');
+  });
+
+  test('a new UTC day refreshes the previous close', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T23:59:50Z') });
+    const mock = await mockBinance(page, undefined, { daily: (_, n) => ({ body: dailyRows(n === 1 ? 75800 : 74000) }) });
+    await goLive(page, mock);
+    await expect(page.getByTestId('day-change')).toHaveText('-3.05%');
+    await page.clock.fastForward(20_000); // it is now 2026-11-11 00:00:10 UTC
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73488 }));
+    await expect.poll(() => mock.dailyRequests.length).toBe(2);
+    await expect(page.getByTestId('day-change')).toHaveText('-0.69%'); // (73488 - 74000) / 74000
+    mock.sockets[0].ws.send(klineMsg({ t: T0, o: 73484, h: 73510, l: 73482, c: 73489 }));
+    await page.waitForTimeout(200);
+    expect(mock.dailyRequests).toHaveLength(2); // asked once for the new day, not on every tick
+  });
+
+  test('switching to demo data hides the day figure again', async ({ page }) => {
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+    await page.getByTestId('scenario').selectOption('normal');
+    await expect(page.getByTestId('day-change')).toBeHidden();
+  });
+
+  test('a slow daily answer for a superseded request is ignored', async ({ page }) => {
+    const mock = await mockBinance(page, undefined, {
+      daily: async (u, n) => { if (n === 1) { await new Promise((r) => setTimeout(r, 700)); return { body: dailyRows(90000) }; } return { body: dailyRows(75800) }; },
+    });
+    await open(page);
+    await page.getByTestId('scenario').selectOption('binance');
+    await page.getByTestId('interval').selectOption('5m'); // second load starts before the first daily answer arrives
+    await expect(page.getByTestId('day-change')).toHaveText('-3.05%');
+    await page.waitForTimeout(1000);
+    await expect(page.getByTestId('day-change')).toHaveText('-3.05%');
+    expect(mock.dailyRequests.length).toBeGreaterThanOrEqual(2);
   });
 });

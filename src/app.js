@@ -3,7 +3,7 @@ import { INDICATORS, computeIndicator, validateParams } from './indicators.js';
 import { sanitizeCandles } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
-import { INTERVAL_SECONDS, fetchHistory, openStream } from './live.js';
+import { INTERVAL_SECONDS, fetchHistory, openStream, utcDay, dayChangePercent, formatPercent } from './live.js';
 
 const { createChart, CandlestickSeries, LineSeries } = window.LightweightCharts;
 
@@ -15,7 +15,7 @@ const BUG = new URLSearchParams(location.search).get('bug');
 const $ = (id) => document.getElementById(id);
 const el = Object.fromEntries(
   ['indicator', 'source', 'period', 'mult', 'mult-label', 'scenario', 'symbol', 'interval', 'start', 'stop', 'disconnect', 'reconnect',
-    'status', 'bar-count', 'last-close', 'legend-label', 'last-sma', 'legend-bands', 'last-bb-upper', 'last-bb-lower']
+    'status', 'bar-count', 'last-close', 'last-update', 'legend-day', 'day-change', 'legend-label', 'last-sma', 'legend-bands', 'last-bb-upper', 'last-bb-lower']
     .map((id) => [id, $(id)]),
 );
 
@@ -29,9 +29,9 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
 });
 
-const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, scenario: 'normal', issues: [] };
+const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
-const live = { gen: 0, conn: null, offline: false }; // gen invalidates answers of superseded requests
+const live = { gen: 0, conn: null, offline: false, symbol: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : '—');
@@ -59,10 +59,26 @@ function showStatus() {
   setStatus(text || 'OK');
 }
 
+// Previous day's close: for the 1d timeframe it is the bar before the last one, otherwise it comes from a 1d request.
+const prevClose = () => (el.interval.value === '1d' ? state.candles.at(-2)?.close : live.prevClose);
+
+function renderUpdated() {
+  if (state.updatedAt === null) return void (el['last-update'].textContent = '—');
+  const time = new Date(state.updatedAt).toLocaleTimeString('en-GB', { hour12: false });
+  const age = Math.max(0, Math.floor((Date.now() - state.updatedAt) / 1000));
+  el['last-update'].textContent = `${time} (${age} s ago)`;
+}
+const touch = () => { state.updatedAt = Date.now(); renderUpdated(); };
+setInterval(renderUpdated, 1000);
+
 function updateLegend() {
   const last = lastCandle();
   el['bar-count'].textContent = String(state.candles.length);
   el['last-close'].textContent = last ? fmt(last.close) : '—';
+  const change = isLive() && last ? dayChangePercent(last.close, prevClose()) : null;
+  el['legend-day'].hidden = !isLive();
+  el['day-change'].textContent = formatPercent(change);
+  el['day-change'].className = change === null || Math.abs(change) < 0.005 ? '' : change < 0 ? 'down' : 'up';
   el['legend-label'].textContent = INDICATORS[state.indicator].label;
   el['last-sma'].textContent = fmt(primaryLine()?.series.data().at(-1)?.value);
   el['legend-bands'].hidden = state.indicator !== 'bb';
@@ -99,6 +115,7 @@ function render() {
 
 // Incremental redraw of the newest bar (new bar or update of the forming one).
 function paintLast(candle) {
+  touch();
   candleSeries.update(candle);
   const pts = points();
   for (const l of lines) {
@@ -118,6 +135,7 @@ function loadScenario(name) {
   state.issues = issues;
   showStatus();
   render();
+  touch();
 }
 
 function applyParam(key, value, label) {
@@ -216,6 +234,7 @@ function reconnect(missedTicks) {
   stream.offlineSince = null;
   for (let i = 0; i < missed && applyTick(); i++);
   render();
+  touch();
   showStatus();
   startStream();
 }
@@ -224,7 +243,19 @@ function reconnect(missedTicks) {
 function closeLive() {
   live.gen++; // any answer still in flight is now stale
   live.conn?.close();
-  Object.assign(live, { conn: null, offline: false });
+  Object.assign(live, { conn: null, offline: false, prevClose: null, dayIndex: null });
+}
+
+// Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
+async function loadDay(gen, symbol, interval) {
+  let close = null;
+  try {
+    const days = interval === '1d' ? [] : await fetchHistory({ symbol, interval: '1d', limit: 2 });
+    close = days.length === 2 ? days[0].close : null;
+  } catch { /* the figure stays empty */ }
+  if (gen !== live.gen) return;
+  Object.assign(live, { prevClose: close, dayIndex: utcDay(Date.now()) });
+  updateLegend();
 }
 
 async function loadLive() {
@@ -238,6 +269,9 @@ async function loadLive() {
     if (gen !== live.gen) return;
     ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history));
     render();
+    touch();
+    live.symbol = symbol;
+    loadDay(gen, symbol, interval);
     live.conn = openStream({
       symbol, interval,
       onKline: ({ candle }) => onLiveKline(gen, candle, interval),
@@ -254,6 +288,10 @@ async function loadLive() {
 
 function onLiveKline(gen, candle, interval) {
   if (gen !== live.gen) return;
+  if (interval !== '1d' && live.dayIndex !== null && utcDay(Date.now()) !== live.dayIndex) {
+    live.dayIndex = utcDay(Date.now()); // a new UTC day has begun: "previous close" moved
+    loadDay(gen, live.symbol, interval);
+  }
   if (![candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)) return;
   const last = lastCandle();
   if (!last || candle.time === last.time) {

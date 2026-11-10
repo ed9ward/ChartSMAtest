@@ -5,7 +5,7 @@ import { generateCandles, partialCandle } from '../src/generator.js';
 import { sanitizeCandles } from '../src/sanitize.js';
 import { SCENARIOS } from '../src/scenarios.js';
 import { createFeed, TICKS_PER_CANDLE } from '../src/feed.js';
-import { parseKline, parseKlineMessage } from '../src/live.js';
+import { parseKline, parseKlineMessage, dayChangePercent, formatPercent } from '../src/live.js';
 import { refSMA, refEMA, refBB, refRSI, compareSeries } from './reference.js';
 import { expectedBars } from './data.js';
 import { assert, equal, close, throws } from './assert.js';
@@ -311,6 +311,12 @@ function binanceGroup(ctx) {
       }),
       c('a WebSocket kline message is parsed', () => equal(parseKlineMessage(msg(), { symbol: 'BTCUSDT', interval: '1m' }),
         { candle: { time: 1, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 }, closed: false })),
+      c('change per day: hand-calculated values and formatting', () => {
+        close(dayChangePercent(73488, 75800), -3.0501319, 6);
+        equal(dayChangePercent(100, 0), null);
+        equal(dayChangePercent(NaN, 100), null);
+        equal([-3.0501319, 0.2638522, 0, 0.004, null].map(formatPercent), ['-3.05%', '+0.26%', '0.00%', '0.00%', '—']);
+      }),
       c('garbage, foreign symbol and foreign interval are ignored', () => {
         const ctx2 = { symbol: 'BTCUSDT', interval: '1m' };
         for (const bad of ['{nope', '', 'null', JSON.stringify({ e: 'trade' }), msg({ s: 'ETHUSDT' }), msg({ i: '5m' })]) equal(parseKlineMessage(bad, ctx2), null);

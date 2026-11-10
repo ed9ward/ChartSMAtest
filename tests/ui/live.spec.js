@@ -1,4 +1,4 @@
-import { test, expect, open, smaData, candleData, probeSmaLine, offsetFromExpected } from './fixtures.js';
+import { test, expect, open, smaData, candleData, expectLineAt } from './fixtures.js';
 import { mulberry32 } from '../../src/generator.js';
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
@@ -246,7 +246,7 @@ test.describe('window size', () => {
       await page.setViewportSize({ width: w, height: h });
       const expectedWidth = Math.min(900, w - 32);
       await expect.poll(() => page.evaluate(() => window.__app.chart.takeScreenshot().width)).toBe(expectedWidth);
-      await expect.poll(async () => offsetFromExpected(await probeSmaLine(page))).toBeLessThanOrEqual(3);
+      await expectLineAt(page);
       await expect(page.getByTestId('bar-count')).toHaveText('60');
       expect(await smaData(page)).toHaveLength(41);
     });
@@ -316,6 +316,6 @@ test.describe('2000 bars', () => {
     await open(page);
     await page.getByTestId('scenario').selectOption('long');
     // 2000 bars in ~900 px: several bars share a pixel column, so the line is steeper and a bit taller there
-    expect(offsetFromExpected(await probeSmaLine(page))).toBeLessThanOrEqual(5);
+    await expectLineAt(page, { tolerance: 5 });
   });
 });

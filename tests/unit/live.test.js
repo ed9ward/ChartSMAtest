@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseKline, parseKlineMessage, fetchHistory, openStream, INTERVAL_SECONDS } from '../../src/live.js';
+import { parseKline, parseKlineMessage, fetchHistory, openStream, INTERVAL_SECONDS, utcDay, dayChangePercent, formatPercent } from '../../src/live.js';
 import { computeSMA } from '../../src/sma.js';
 
 const RAW = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url)));
@@ -143,5 +143,27 @@ describe('golden SMA values on real BTCUSDT data', () => {
     const first = computeSMA(candles, 20, 'close')[0];
     expect(first.time).toBe(1794325620);
     expect(first.value).toBeCloseTo(73521.755, 6);
+  });
+});
+
+describe('change per day', () => {
+  it('hand-calculated values', () => {
+    expect(dayChangePercent(73488, 75800)).toBeCloseTo(-3.0501319, 6);
+    expect(dayChangePercent(76000, 75800)).toBeCloseTo(0.2638522, 6);
+    expect(dayChangePercent(100, 100)).toBe(0);
+    expect(dayChangePercent(150, 100)).toBe(50);
+  });
+  it.each([[NaN, 100], [100, NaN], [null, 100], [100, null], [undefined, 100], [100, 0], [Infinity, 100], [100, Infinity]])('cannot be calculated for %s / %s', (a, b) => {
+    expect(dayChangePercent(a, b)).toBeNull();
+  });
+  it.each([
+    [-3.0501319, '-3.05%'], [0.2638522, '+0.26%'], [0, '0.00%'], [0.004, '0.00%'], [-0.004, '0.00%'],
+    [0.005, '+0.01%'], [-0.005, '-0.01%'], [12.3456, '+12.35%'], [-100, '-100.00%'], [null, '—'], [NaN, '—'], [Infinity, '—'],
+  ])('formats %s as %s', (value, text) => {
+    expect(formatPercent(value)).toBe(text);
+  });
+  it('UTC day number changes exactly at midnight UTC', () => {
+    expect(utcDay(Date.UTC(2026, 10, 10, 23, 59, 59, 999))).toBe(utcDay(Date.UTC(2026, 10, 10, 0, 0, 0)));
+    expect(utcDay(Date.UTC(2026, 10, 11, 0, 0, 0))).toBe(utcDay(Date.UTC(2026, 10, 10, 0, 0, 0)) + 1);
   });
 });

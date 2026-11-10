@@ -1,4 +1,4 @@
-import { test, expect, open, smaData, candleData, text, probeSmaLine, offsetFromExpected } from './fixtures.js';
+import { test, expect, open, smaData, candleData, text, probeSmaLine, expectLineAt } from './fixtures.js';
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
@@ -80,16 +80,17 @@ test.describe('price display', () => {
 test.describe('visual check on the real canvas', () => {
   test('SMA line is drawn exactly where its last value should be', async ({ page }) => {
     await open(page);
-    expect(offsetFromExpected(await probeSmaLine(page))).toBeLessThanOrEqual(3);
+    await expectLineAt(page);
   });
 
   test('the line moves when the source changes', async ({ page }) => {
     await open(page);
+    await expectLineAt(page);
     const a = await probeSmaLine(page);
     await page.getByTestId('source').selectOption('low');
+    await expectLineAt(page);
     const b = await probeSmaLine(page);
     const mean = (ys) => ys.reduce((x, y) => x + y, 0) / ys.length;
-    expect(offsetFromExpected(b)).toBeLessThanOrEqual(3);
     expect(mean(b.ys)).toBeGreaterThan(mean(a.ys)); // SMA(low) is below SMA(close): larger y
   });
 
@@ -192,7 +193,7 @@ test.describe('strange data', () => {
     const probe = await probeSmaLine(page);
     expect(probe.expectedY).toBeGreaterThan(0);
     expect(probe.expectedY).toBeLessThan(probe.height);
-    expect(offsetFromExpected(probe)).toBeLessThanOrEqual(3);
+    await expectLineAt(page);
   });
 
   test('empty data: legend shows dashes, switching back restores the chart', async ({ page }) => {

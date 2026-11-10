@@ -32,3 +32,9 @@ export function offsetFromExpected(probe, maxSpread = 12) {
   if (Math.max(...probe.ys) - Math.min(...probe.ys) > maxSpread) return 999; // not a thin line: the colour match is too loose
   return Math.abs(probe.ys.reduce((a, b) => a + b, 0) / probe.ys.length - probe.expectedY);
 }
+
+// Waits until the line is drawn where it should be (the chart repaints a moment after any change).
+export async function expectLineAt(page, { key, tolerance = 3 } = {}) {
+  await expect.poll(async () => offsetFromExpected(await probeLine(page, key)), { message: `line ${key ?? '(main)'}` })
+    .toBeLessThanOrEqual(tolerance);
+}

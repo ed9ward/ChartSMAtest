@@ -11,12 +11,13 @@ export default defineConfig({
   forbidOnly: ci,
   retries: 0, // a flaky test must fail loudly, not pass on the second try
   workers: ci ? 2 : undefined, // locally: half of the CPU cores
-  reporter: ci ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  reporter: ci ? [['list'], ['github'], ['html', { open: 'never' }]] : [['list']], // 'github' puts failures into the run's annotations
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1100, height: 800 },
     deviceScaleFactor: 1,
     locale: 'en-US',
+    timezoneId: 'UTC', // the page shows local time; fixed so the tests do not depend on the machine
     launchOptions: executablePath ? { executablePath, args: ['--no-sandbox'] } : {},
   },
   webServer: {

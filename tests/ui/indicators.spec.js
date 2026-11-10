@@ -1,4 +1,4 @@
-import { test, expect, open, candleData, probeLine, offsetFromExpected } from './fixtures.js';
+import { test, expect, open, candleData, probeLine, expectLineAt } from './fixtures.js';
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
@@ -85,7 +85,7 @@ for (const [kind, info] of Object.entries(KINDS)) {
       await open(page);
       await pick(page, kind);
       for (const key of info.keys) {
-        await expect.poll(async () => offsetFromExpected(await probeLine(page, key)), { message: `line ${key}` }).toBeLessThanOrEqual(3);
+        await expectLineAt(page, { key });
       }
     });
 
