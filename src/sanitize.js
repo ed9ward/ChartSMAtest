@@ -40,6 +40,12 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
       dropped[problem]++;
       continue;
     }
+    // A candle that is not on the selected timeframe's bucket boundary cannot be
+    // safely plotted or compared with adjacent bars. Treat it like any other invalid row.
+    if (intervalSeconds !== null && c.time % intervalSeconds !== 0) {
+      dropped.invalid++;
+      continue;
+    }
     if (c.time < prevTime) unordered = true;
     prevTime = Math.max(prevTime, c.time);
     if (byTime.has(c.time)) duplicates++;
@@ -52,7 +58,7 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
   if (dropped.inconsistent) issues.push(`dropped ${dropped.inconsistent} inconsistent candle(s) (impossible high/low or negative volume)`);
   if (duplicates) issues.push(`merged ${duplicates} duplicate timestamp(s)`);
   if (unordered) issues.push('sorted unordered data');
-  if (intervalSeconds !== null && candles.length > 1 && dropped.invalid === 0 && dropped.range === 0 && dropped.inconsistent === 0) {
+  if (intervalSeconds !== null && candles.length > 1) {
     let missing = 0;
     for (let i = 1; i < candles.length; i++) {
       const steps = (candles[i].time - candles[i - 1].time) / intervalSeconds;
