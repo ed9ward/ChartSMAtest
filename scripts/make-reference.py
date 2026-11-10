@@ -1,12 +1,18 @@
-"""Calculates indicator values with TA-Lib (an independent, industry-standard C library) and stores them in
-tests/fixtures/talib-reference.json. The app's own results are compared against this file (checks.html).
+"""Calculates indicator values with independent libraries and stores them in tests/fixtures/talib-reference.json.
+The app's own results are compared against this file (checks.html).
 
-Run:  python scripts/make-reference.py        (needs:  pip install TA-Lib numpy)
+  SMA, Bollinger Bands, RSI       TA-Lib (industry-standard C library)
+  EMA, first value as the start   pandas  ewm(span, adjust=False): y0 = x0, y[t] = a*x[t] + (1-a)*y[t-1]  (the reference
+                                  implementation in the TradingView Pine documentation does the same)
+  EMA, SMA of the first N values  TA-Lib  (TA-Lib's own start)
+
+Run:  python scripts/make-reference.py        (needs:  pip install TA-Lib numpy pandas)
 """
 import json
 import pathlib
 
 import numpy as np
+import pandas as pd
 import talib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -34,8 +40,8 @@ def series_for(c, indicator, source, period, mult=2):
     x = np.ascontiguousarray(source_values(c, source), dtype=float)
     if indicator == "sma":
         lines = {"sma": talib.SMA(x, period)}
-    elif indicator == "ema":
-        lines = {"ema": talib.EMA(x, period)}
+    elif indicator == "ema":  # see `ema_series` for the two starts
+        raise ValueError("use ema_series")
     elif indicator == "rsi":
         lines = {"rsi": talib.RSI(x, period)}
     else:  # Bollinger Bands: population standard deviation, SMA basis
@@ -47,15 +53,29 @@ def series_for(c, indicator, source, period, mult=2):
     return out
 
 
+def ema_series(c, source, period, seed):
+    x = np.ascontiguousarray(source_values(c, source), dtype=float)
+    if seed == "first":
+        values = pd.Series(x).ewm(span=period, adjust=False).mean().to_numpy()
+        reference = "pandas"
+    else:
+        values = talib.EMA(x, period)
+        reference = "TA-Lib"
+    return {"indicator": "ema", "seed": seed, "reference": reference, "source": source, "period": period, "lines": {"ema": cleaned(values)}}
+
+
 def build(dataset_id, title, rows, sources, periods):
     c = {k: np.array([r[k] for r in rows], dtype=float) for k in ("open", "high", "low", "close", "volume")}
-    series = [
-        series_for(c, indicator, source, period)
-        for indicator in ("sma", "ema", "bb", "rsi")
-        for source in sources
-        for period in periods
-        if period < len(rows)
-    ]
+    series = []
+    for source in sources:
+        for period in periods:
+            if period >= len(rows):
+                continue
+            series.append(series_for(c, "sma", source, period))
+            series.append(ema_series(c, source, period, "first"))
+            series.append(ema_series(c, source, period, "sma"))
+            series.append(series_for(c, "bb", source, period))
+            series.append(series_for(c, "rsi", source, period))
     return {"id": dataset_id, "title": title, "candles": rows, "series": series}
 
 
@@ -86,9 +106,9 @@ def random_walk_rows(count=300, seed=7):
 
 datasets = [
     build("real50", "50 real BTCUSDT 1m bars from Binance", real_rows(), SOURCES, [5, 14, 20]),
-    build("walk300", "300 random-walk bars (generated independently of the app)", random_walk_rows(), ["close", "hlc3", "volume"], [14, 50]),
+    build("walk300", "300 random-walk bars (generated independently of the app)", random_walk_rows(), ["close", "hlc3", "volume"], [14, 50, 200]),
 ]
-doc = {"generatedWith": {"TA-Lib": talib.__version__, "numpy": np.__version__}, "datasets": datasets}
+doc = {"generatedWith": {"TA-Lib": talib.__version__, "pandas": pd.__version__, "numpy": np.__version__}, "datasets": datasets}
 path = FIXTURES / "talib-reference.json"
 path.write_text(json.dumps(doc, separators=(",", ":")))
 print(path, f"{path.stat().st_size / 1024:.0f} KB", [(d["id"], len(d["series"])) for d in datasets])

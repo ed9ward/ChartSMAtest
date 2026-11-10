@@ -108,7 +108,7 @@ test.describe('Coinbase history', () => {
     await expect(page.getByTestId('last-close')).toHaveText('73488.00');
     await expect(page.getByTestId('last-sma')).toHaveText('73310.66');
     await page.getByTestId('indicator').selectOption('ema');
-    await expect(page.getByTestId('last-sma')).toHaveText('73346.25');
+    await expect(page.getByTestId('last-sma')).toHaveText('73342.91'); // first value as start
     await page.getByTestId('indicator').selectOption('bb');
     await expect(page.getByTestId('last-bb-upper')).toHaveText('73476.76');
     await expect(page.getByTestId('last-bb-lower')).toHaveText('73144.57');

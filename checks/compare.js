@@ -42,16 +42,19 @@ export function mergeStats(list) {
   return total;
 }
 
-/** Statistics for one indicator of one reference dataset (all of its sources, periods and lines). */
-export function compareIndicator(dataset, indicator) {
+/**
+ * Statistics for one indicator of one reference dataset (all of its sources, periods and lines).
+ * `start` selects the EMA variant ('first' or 'sma'); other indicators have none.
+ */
+export function compareIndicator(dataset, indicator, start) {
   const times = dataset.candles.map((c) => c.time);
   const all = [];
-  for (const s of dataset.series.filter((x) => x.indicator === indicator)) {
-    const got = computeIndicator(indicator, dataset.candles, { period: s.period, mult: s.mult }, s.source);
+  const chosen = dataset.series.filter((x) => x.indicator === indicator && (start === undefined || x.seed === start));
+  for (const s of chosen) {
+    const got = computeIndicator(indicator, dataset.candles, { period: s.period, mult: s.mult, start: s.seed }, s.source);
     for (const [line, values] of Object.entries(s.lines)) {
-      const stats = compareLine(got[line] ?? [], values, times);
-      all.push({ ...stats, label: `${s.source}/${s.period}/${line}` });
+      all.push({ ...compareLine(got[line] ?? [], values, times), label: `${s.source}/${s.period}/${line}` });
     }
   }
-  return mergeStats(all);
+  return { ...mergeStats(all), reference: chosen[0]?.reference ?? 'TA-Lib' };
 }

@@ -19,7 +19,7 @@ const pointValues = (pts) => pts.map((p) => p.value);
 
 const REFERENCE = {
   sma: (c, p, s) => ({ sma: refSMA(c, p.period, s) }),
-  ema: (c, p, s) => ({ ema: refEMA(c, p.period, s) }),
+  ema: (c, p, s) => ({ ema: refEMA(c, p.period, s, p.start) }),
   bb: (c, p, s) => refBB(c, p.period, p.mult, s),
   rsi: (c, p, s) => ({ rsi: refRSI(c, p.period, s) }),
 };
@@ -34,16 +34,23 @@ function matchReference(kind, candles, params, source) {
 // --- what is checked per indicator -----------------------------------------
 const GRID = {
   sma: [{ period: 1 }, { period: 5 }, { period: 20 }, { period: 50 }],
-  ema: [{ period: 1 }, { period: 5 }, { period: 20 }, { period: 50 }],
+  ema: [
+    { period: 1, start: 'first' }, { period: 5, start: 'first' }, { period: 20, start: 'first' }, { period: 50, start: 'first' },
+    { period: 5, start: 'sma' }, { period: 20, start: 'sma' }, { period: 50, start: 'sma' },
+  ],
   bb: [{ period: 1, mult: 2 }, { period: 5, mult: 2 }, { period: 20, mult: 2 }, { period: 20, mult: 3.5 }, { period: 50, mult: 2 }],
   rsi: [{ period: 1 }, { period: 5 }, { period: 14 }, { period: 50 }],
 };
-const label = (p) => `period ${p.period}${p.mult !== undefined ? `, mult ${p.mult}` : ''}`;
+const label = (p) => `period ${p.period}${p.mult !== undefined ? `, mult ${p.mult}` : ''}${p.start ? `, ${p.start} start` : ''}`;
 
 // Hand-calculated results: [candles, params, expected lines]
 const HAND = {
   sma: () => equal(computeIndicator('sma', closes([1, 2, 3]), { period: 2 }).sma, [{ time: 2, value: 1.5 }, { time: 3, value: 2.5 }]),
-  ema: () => equal(computeIndicator('ema', closes([1, 2, 3, 4, 5]), { period: 3 }).ema, [{ time: 3, value: 2 }, { time: 4, value: 3 }, { time: 5, value: 4 }]),
+  ema: () => {
+    // alpha = 0.5. First-value start: 1, 1.5, 2.25, 3.125, 4.0625. SMA start: (1+2+3)/3 = 2 on bar 3, then 3, 4.
+    equal(pointValues(computeIndicator('ema', closes([1, 2, 3, 4, 5]), { period: 3, start: 'first' }).ema), [1, 1.5, 2.25, 3.125, 4.0625]);
+    equal(computeIndicator('ema', closes([1, 2, 3, 4, 5]), { period: 3, start: 'sma' }).ema, [{ time: 3, value: 2 }, { time: 4, value: 3 }, { time: 5, value: 4 }]);
+  },
   bb: () => {
     const r = computeIndicator('bb', closes([1, 2, 3]), { period: 3, mult: 2 });
     close(r.basis[0].value, 2, 12);
@@ -72,11 +79,15 @@ const GOLDEN = {
     close(last(10, 'volume'), 15.738642, 6, 'volume/10');
   },
   ema: (real) => {
-    const ema = (p) => computeIndicator('ema', real, { period: p }).ema;
-    close(ema(20).at(-1).value, 73346.247551, 5, 'ema 20');
-    close(ema(5).at(-1).value, 73429.147754, 5, 'ema 5');
-    close(ema(20)[0].value, 73521.755, 5, 'ema 20 first');
-    close(ema(20).at(-2).value, 73331.326241, 5, 'ema 20 at 16:16 UTC');
+    const first = (p) => computeIndicator('ema', real, { period: p, start: 'first' }).ema;
+    close(first(20).at(-1).value, 73342.914264, 5, 'ema 20, first value start');
+    close(first(5).at(-1).value, 73429.147754, 5, 'ema 5, first value start');
+    close(first(20)[0].value, 74132.1, 5, 'ema 20 starts at the first close');
+    close(first(20).at(-2).value, 73327.642081, 5, 'ema 20 at 16:16 UTC, first value start');
+    const sma = (p) => computeIndicator('ema', real, { period: p, start: 'sma' }).ema;
+    close(sma(20).at(-1).value, 73346.247551, 5, 'ema 20, sma start');
+    close(sma(20)[0].value, 73521.755, 5, 'ema 20, sma start, first value');
+    close(sma(20).at(-2).value, 73331.326241, 5, 'ema 20 at 16:16 UTC, sma start');
   },
   bb: (real) => {
     const r = computeIndicator('bb', real, { period: 20, mult: 2 });
@@ -110,8 +121,26 @@ function logicChecks(kind, ctx) {
   checks.push({ name: 'hand-calculated values', run: HAND[kind] });
   checks.push({
     name: 'period longer than the data gives an empty result',
-    run: () => { for (const pts of Object.values(computeIndicator(kind, DATA, { period: DATA.length + 1, mult: 2 }))) equal(pts, []); },
+    run: () => { for (const pts of Object.values(computeIndicator(kind, DATA, { period: DATA.length + 1, mult: 2, start: 'sma' }))) equal(pts, []); },
   });
+  if (kind === 'ema') {
+    checks.push({
+      name: 'EMA with the first value as start has a value on every bar, even if the period is longer than the data',
+      run: () => equal(computeIndicator('ema', DATA, { period: DATA.length + 50, start: 'first' }).ema.length, DATA.length),
+    });
+    checks.push({
+      name: 'the two EMA starts differ by a term that shrinks by (1 - alpha) on every bar',
+      run: () => {
+        const period = 20;
+        const a = 2 / (period + 1);
+        const first = computeIndicator('ema', DATA, { period, start: 'first' }).ema;
+        const sma = computeIndicator('ema', DATA, { period, start: 'sma' }).ema;
+        const gap0 = first[period - 1].value - sma[0].value;
+        assert(Math.abs(gap0) > 0, 'the starts do not differ at all');
+        sma.forEach((p, k) => close(first[period - 1 + k].value - p.value, (1 - a) ** k * gap0, 8, `bar ${k}`));
+      },
+    });
+  }
   checks.push({
     name: 'invalid periods are rejected',
     run: () => { for (const period of [0, -1, 1.5, NaN, Infinity]) throws(() => computeIndicator(kind, DATA, { period, mult: 2 }), /period/i); },
@@ -189,6 +218,15 @@ function uiChecks(kind, ctx) {
     assert(/Invalid period/.test(ui().text('status')), `status is "${ui().text('status')}"`);
     equal(snapshot(), before);
   });
+  if (kind === 'ema') {
+    add('chart: switching the EMA start to the SMA start and back matches the reference', () => {
+      ui().setup({ indicator: kind });
+      ui().select('ema-start', 'sma');
+      matchChart(NORMAL, { ...defaults, start: 'sma' }, 'close');
+      ui().select('ema-start', 'first');
+      matchChart(NORMAL, { ...defaults, start: 'first' }, 'close');
+    });
+  }
   add('legend shows the last value of the main line', () => {
     ui().setup({ indicator: kind });
     const want = REFERENCE[kind](NORMAL, defaults, 'close')[def.lines.find((l) => l.primary).key].at(-1).value;
@@ -335,19 +373,26 @@ function binanceGroup(ctx) {
   };
 }
 
-// Statistics against TA-Lib: every value of every series must be identical (floating point noise aside).
+// Statistics against independent libraries: every value of every series must be identical (floating point noise aside).
+const COMPARISONS = [
+  { key: 'sma', indicator: 'sma', title: 'SMA' },
+  { key: 'ema-first', indicator: 'ema', start: 'first', title: 'EMA, first value as start' },
+  { key: 'ema-sma', indicator: 'ema', start: 'sma', title: 'EMA, SMA of the first N as start' },
+  { key: 'bollinger-bands', indicator: 'bb', title: 'Bollinger Bands' },
+  { key: 'rsi', indicator: 'rsi', title: 'RSI' },
+];
+
 function talibGroup(ctx) {
-  const titles = { sma: 'SMA', ema: 'EMA', bb: 'Bollinger Bands', rsi: 'RSI' };
   const checks = [];
   for (const datasetId of ['real50', 'walk300']) {
-    for (const indicator of ['sma', 'ema', 'bb', 'rsi']) {
+    for (const { key, indicator, start, title } of COMPARISONS) {
       checks.push({
-        name: `${titles[indicator]} on ${datasetId} equals TA-Lib`,
+        name: `${title} on ${datasetId} equals the reference library`,
         run: async () => {
           const dataset = (await ctx.talibReference()).datasets.find((d) => d.id === datasetId);
           assert(dataset, `dataset ${datasetId} is not in the reference file`);
-          const stats = compareIndicator(dataset, indicator);
-          const detail = { stats: { ...stats, dataset: dataset.title, datasetId, indicator: titles[indicator] } };
+          const stats = compareIndicator(dataset, indicator, start);
+          const detail = { stats: { ...stats, dataset: dataset.title, datasetId, indicator: title, key } };
           const fail = (message) => Object.assign(new Error(message), { detail }); // the table still shows the numbers
           if (stats.compared === 0) throw fail('nothing was compared');
           if (stats.missing || stats.extra) throw fail(`${stats.missing} values missing, ${stats.extra} unexpected`);
@@ -359,7 +404,7 @@ function talibGroup(ctx) {
       });
     }
   }
-  return { id: 'talib', title: 'Comparison with TA-Lib', checks };
+  return { id: 'talib', title: 'Comparison with TA-Lib and pandas', checks };
 }
 
 function coinbaseGroup() {

@@ -12,51 +12,121 @@ const closes = (xs) => xs.map((x, i) => candle(i + 1, x));
 const values = (pts) => pts.map((p) => p.value);
 
 describe('EMA', () => {
-  for (const source of SOURCES) {
-    for (const period of [1, 2, 5, 14, 20, 50, 299, 300]) {
-      it(`${source}, period ${period} matches the reference`, () => {
-        expectSeriesClose(computeEMA(candles, period, source), refEMA(candles, period, source));
-      });
+  for (const start of ['first', 'sma']) {
+    for (const source of SOURCES) {
+      for (const period of [1, 2, 5, 14, 20, 50, 299, 300]) {
+        it(`${start} start, ${source}, period ${period} matches the reference`, () => {
+          expectSeriesClose(computeEMA(candles, period, source, start), refEMA(candles, period, source, start));
+        });
+      }
     }
   }
-  it('hand-calculated: [1..5], period 3', () => {
-    // seed = (1+2+3)/3 = 2 at bar 3, alpha = 0.5 -> 3, 4
-    expect(computeEMA(closes([1, 2, 3, 4, 5]), 3)).toEqual([{ time: 3, value: 2 }, { time: 4, value: 3 }, { time: 5, value: 4 }]);
+
+  describe('hand-calculated', () => {
+    // alpha = 2 / (3 + 1) = 0.5
+    it('first value as start: 1, 1.5, 2.25, 3.125, 4.0625', () => {
+      expect(values(computeEMA(closes([1, 2, 3, 4, 5]), 3, 'close', 'first'))).toEqual([1, 1.5, 2.25, 3.125, 4.0625]);
+    });
+    it('SMA start: (1+2+3)/3 = 2 on bar 3, then 3, 4', () => {
+      expect(computeEMA(closes([1, 2, 3, 4, 5]), 3, 'close', 'sma')).toEqual([{ time: 3, value: 2 }, { time: 4, value: 3 }, { time: 5, value: 4 }]);
+    });
+    it('the default is the first-value start', () => {
+      expect(computeEMA(closes([1, 2, 3, 4, 5]), 3)).toEqual(computeEMA(closes([1, 2, 3, 4, 5]), 3, 'close', 'first'));
+    });
   });
-  it('period 1 follows the price exactly', () => {
-    expect(values(computeEMA(candles, 1, 'close'))).toEqual(candles.map((c) => c.close));
+
+  describe('where the first value appears', () => {
+    it('first value as start: on the first bar, for any period, even one longer than the data', () => {
+      expect(computeEMA(candles, 10, 'close', 'first')[0].time).toBe(candles[0].time);
+      expect(computeEMA(candles, 10, 'close', 'first')[0].value).toBe(candles[0].close);
+      expect(computeEMA(candles, 1000, 'close', 'first')).toHaveLength(300);
+    });
+    it('SMA start: on bar index period-1; nothing if the period is longer than the data', () => {
+      expect(computeEMA(candles, 10, 'close', 'sma')[0].time).toBe(candles[9].time);
+      expect(computeEMA(candles, 301, 'close', 'sma')).toEqual([]);
+    });
+    it('empty data gives nothing', () => {
+      expect(computeEMA([], 5, 'close', 'first')).toEqual([]);
+      expect(computeEMA([], 5, 'close', 'sma')).toEqual([]);
+    });
   });
-  it('first point appears at bar index period-1; period longer than data gives nothing', () => {
-    expect(computeEMA(candles, 10)[0].time).toBe(candles[9].time);
-    expect(computeEMA(candles, 301)).toEqual([]);
-    expect(computeEMA([], 5)).toEqual([]);
+
+  it.each(['first', 'sma'])('period 1 follows the price exactly (%s start)', (start) => {
+    expect(values(computeEMA(candles, 1, 'close', start))).toEqual(candles.map((c) => c.close));
   });
-  it('a constant price gives a constant EMA', () => {
-    expect(values(computeEMA(closes(Array(30).fill(7.5)), 10)).every((v) => v === 7.5)).toBe(true);
+  it.each(['first', 'sma'])('a constant price gives a constant EMA (%s start)', (start) => {
+    expect(values(computeEMA(closes(Array(30).fill(7.5)), 10, 'close', start)).every((v) => v === 7.5)).toBe(true);
   });
-  it('reacts faster than SMA to a jump', () => {
+  it('reacts to a jump but never overshoots it', () => {
     const data = closes([...Array(20).fill(100), ...Array(5).fill(200)]);
-    const ema = computeEMA(data, 10).at(-1).value;
-    expect(ema).toBeGreaterThan(100 + 0.5 * 100 * (1 - Math.pow(1 - 2 / 11, 5)) - 1); // moved a lot
-    expect(ema).toBeLessThan(200);
+    for (const start of ['first', 'sma']) {
+      const ema = computeEMA(data, 10, 'close', start).at(-1).value;
+      expect(ema).toBeGreaterThan(130);
+      expect(ema).toBeLessThan(200);
+    }
   });
-  it('a bad value breaks the chain; it starts again after `period` good values', () => {
-    const data = closes(Array.from({ length: 12 }, (_, i) => i + 1));
-    data[5].close = NaN; // bar 6
-    const times = computeEMA(data, 3).map((p) => p.time);
-    expect(times).toEqual([3, 4, 5, /* gap at 6..8 */ 9, 10, 11, 12]);
+
+  describe('the two starts', () => {
+    it('differ by a term that shrinks by (1 - alpha) on every bar, exactly', () => {
+      for (const period of [5, 14, 20, 50]) {
+        const a = 2 / (period + 1);
+        const first = computeEMA(candles, period, 'close', 'first');
+        const sma = computeEMA(candles, period, 'close', 'sma');
+        const gap0 = first[period - 1].value - sma[0].value;
+        expect(Math.abs(gap0)).toBeGreaterThan(0);
+        sma.forEach((p, k) => expect(first[period - 1 + k].value - p.value).toBeCloseTo((1 - a) ** k * gap0, 9));
+      }
+    });
+    it('are far apart with a long period and a short history (period 200, 300 bars)', () => {
+      const first = computeEMA(candles, 200, 'close', 'first').at(-1).value;
+      const sma = computeEMA(candles, 200, 'close', 'sma').at(-1).value;
+      expect(Math.abs(first - sma)).toBeGreaterThan(0.1);
+    });
+    it('have become equal to the cent after enough bars', () => {
+      const first = computeEMA(candles, 5, 'close', 'first');
+      const sma = computeEMA(candles, 5, 'close', 'sma');
+      expect(Math.abs(first.at(-1).value - sma.at(-1).value)).toBeLessThan(0.005);
+    });
   });
-  it.each([NaN, null, undefined, Infinity, '5'])('bad value %s is skipped without Infinity or NaN in the output', (bad) => {
-    const data = closes(Array.from({ length: 30 }, (_, i) => 100 + i));
-    data[15].close = bad;
-    expect(computeEMA(data, 5).every((p) => Number.isFinite(p.value))).toBe(true);
+
+  describe('bad values', () => {
+    it('first value as start: the chain ends and starts again with the next good value', () => {
+      const data = closes(Array.from({ length: 12 }, (_, i) => i + 1));
+      data[5].close = NaN; // bar 6
+      expect(computeEMA(data, 3, 'close', 'first').map((p) => p.time)).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]);
+      expect(computeEMA(data, 3, 'close', 'first').find((p) => p.time === 7).value).toBe(7); // restarted from the price
+    });
+    it('SMA start: after a bad value it needs `period` good values in a row again', () => {
+      const data = closes(Array.from({ length: 12 }, (_, i) => i + 1));
+      data[5].close = NaN; // bar 6
+      expect(computeEMA(data, 3, 'close', 'sma').map((p) => p.time)).toEqual([3, 4, 5, 9, 10, 11, 12]);
+    });
+    it.each([NaN, null, undefined, Infinity, '5'])('bad value %s never reaches the output (both starts)', (bad) => {
+      for (const start of ['first', 'sma']) {
+        const data = closes(Array.from({ length: 30 }, (_, i) => 100 + i));
+        data[15].close = bad;
+        const out = computeEMA(data, 5, 'close', start);
+        expect(out.length).toBeGreaterThan(0);
+        expect(out.every((p) => Number.isFinite(p.value))).toBe(true);
+      }
+    });
+    it('a bad first value only delays the first-value start', () => {
+      const data = closes([1, 2, 3, 4]);
+      data[0].close = NaN;
+      expect(computeEMA(data, 3, 'close', 'first').map((p) => p.time)).toEqual([2, 3, 4]);
+    });
   });
-  it('negative prices work', () => {
+
+  it.each(['first', 'sma'])('negative prices work (%s start)', (start) => {
     const neg = candles.map((c) => ({ ...c, close: c.close - 500 }));
-    expectSeriesClose(computeEMA(neg, 10), refEMA(neg, 10, 'close'));
+    expectSeriesClose(computeEMA(neg, 10, 'close', start), refEMA(neg, 10, 'close', start));
   });
-  it('overflow gives a gap, not Infinity', () => {
-    expect(computeEMA(closes([Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE]), 3)).toEqual([]);
+  it.each(['first', 'sma'])('values at the edge of the number range stay finite (%s start)', (start) => {
+    const out = computeEMA(closes([Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE]), 2, 'close', start);
+    expect(out.every((p) => Number.isFinite(p.value))).toBe(true);
+  });
+  it('an unknown start is rejected', () => {
+    for (const bad of ['SMA', 'tradingview', '', null, 1]) expect(() => computeEMA(candles, 5, 'close', bad)).toThrow(/Unknown EMA start/);
   });
 });
 
@@ -182,6 +252,11 @@ describe('parameters and dispatch', () => {
     expect(() => computeBB(candles, 20, mult)).toThrow(RangeError);
     expect(() => validateParams('bb', { period: 20, mult })).toThrow(RangeError);
   });
+  it('the EMA start is checked, and a missing one means the default', () => {
+    expect(() => validateParams('ema', { period: 20, start: 'bogus' })).toThrow(RangeError);
+    expect(() => validateParams('ema', { period: 20 })).not.toThrow();
+    expect(() => validateParams('sma', { period: 20, start: 'bogus' })).not.toThrow();
+  });
   it('the multiplier is not checked for other indicators', () => {
     expect(() => validateParams('ema', { period: 20, mult: NaN })).not.toThrow();
   });
@@ -200,7 +275,7 @@ describe('parameters and dispatch', () => {
   });
   it('defaults', () => {
     expect(INDICATORS.sma.defaults).toEqual({ period: 20 });
-    expect(INDICATORS.ema.defaults).toEqual({ period: 20 });
+    expect(INDICATORS.ema.defaults).toEqual({ period: 20, start: 'first' });
     expect(INDICATORS.bb.defaults).toEqual({ period: 20, mult: 2 });
     expect(INDICATORS.rsi.defaults).toEqual({ period: 14 });
     expect(INDICATORS.rsi.pane).toBe(1);
@@ -212,13 +287,20 @@ describe('golden values on real BTCUSDT data', () => {
   const real = JSON.parse(readFileSync(new URL('../fixtures/btcusdt-1m.json', import.meta.url))).map(parseKline);
   const last = (pts, back = 0) => pts[pts.length - 1 - back].value;
 
-  it('EMA 20 / 5 / first point', () => {
-    expect(last(computeEMA(real, 20))).toBeCloseTo(73346.247551, 5);
-    expect(last(computeEMA(real, 5))).toBeCloseTo(73429.147754, 5);
-    expect(computeEMA(real, 20)[0].value).toBeCloseTo(73521.755, 5);
+  it('EMA, first value as start: 20 / 5 / first point / 16:16 UTC (pandas ewm and an exact Decimal calculation agree)', () => {
+    expect(last(computeEMA(real, 20, 'close', 'first'))).toBeCloseTo(73342.914264, 5);
+    expect(last(computeEMA(real, 5, 'close', 'first'))).toBeCloseTo(73429.147754, 5);
+    expect(computeEMA(real, 20, 'close', 'first')[0].value).toBe(74132.1);
+    expect(last(computeEMA(real, 20, 'close', 'first'), 1)).toBeCloseTo(73327.642081, 5);
   });
-  it('EMA 20 on the last closed bar (16:16 UTC)', () => {
-    expect(last(computeEMA(real, 20), 1)).toBeCloseTo(73331.326241, 5);
+  it('EMA, SMA start (TA-Lib): 20 / 5 / first point / 16:16 UTC', () => {
+    expect(last(computeEMA(real, 20, 'close', 'sma'))).toBeCloseTo(73346.247551, 5);
+    expect(last(computeEMA(real, 5, 'close', 'sma'))).toBeCloseTo(73429.147754, 5);
+    expect(computeEMA(real, 20, 'close', 'sma')[0].value).toBeCloseTo(73521.755, 5);
+    expect(last(computeEMA(real, 20, 'close', 'sma'), 1)).toBeCloseTo(73331.326241, 5);
+  });
+  it('the two starts give EMA 20 values 3.33 dollars apart on this data', () => {
+    expect(last(computeEMA(real, 20, 'close', 'sma')) - last(computeEMA(real, 20, 'close', 'first'))).toBeCloseTo(3.333287, 5);
   });
   it('Bollinger (20, 2) on the last bar and on 16:16 UTC', () => {
     const r = computeBB(real, 20, 2);

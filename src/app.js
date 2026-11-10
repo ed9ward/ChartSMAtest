@@ -15,7 +15,7 @@ const BUG = new URLSearchParams(location.search).get('bug');
 
 const $ = (id) => document.getElementById(id);
 const el = Object.fromEntries(
-  ['indicator', 'source', 'period', 'mult', 'mult-label', 'scenario', 'symbol', 'interval', 'start', 'stop', 'disconnect', 'reconnect',
+  ['indicator', 'source', 'period', 'mult', 'mult-label', 'ema-start', 'start-label', 'scenario', 'symbol', 'interval', 'start', 'stop', 'disconnect', 'reconnect',
     'status', 'bar-count', 'last-close', 'last-update', 'legend-day', 'day-change', 'legend-label', 'last-sma', 'legend-bands', 'last-bb-upper', 'last-bb-lower']
     .map((id) => [id, $(id)]),
 );
@@ -30,7 +30,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
 });
 
-const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, scenario: 'normal', issues: [], updatedAt: null };
+const state = { candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, start: 'first', scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const live = { gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
@@ -42,7 +42,7 @@ const lineLast = (key) => lines.find((l) => l.key === key)?.series.data().at(-1)
 
 function params() {
   const period = BUG === 'offbyone' ? Math.max(1, state.period - 1) : state.period;
-  return { period, mult: state.mult };
+  return { period, mult: state.mult, start: state.start };
 }
 const points = () => computeIndicator(state.indicator, state.candles, params(), state.source);
 
@@ -159,7 +159,7 @@ function loadScenario(name) {
 
 function applyParam(key, value, label) {
   try {
-    validateParams(state.indicator, { period: state.period, mult: state.mult, [key]: value });
+    validateParams(state.indicator, { period: state.period, mult: state.mult, start: state.start, [key]: value });
   } catch (e) {
     setStatus(`Invalid ${label}: ${e.message}`, true);
     return;
@@ -174,8 +174,11 @@ function selectIndicator(kind) {
   const { defaults } = INDICATORS[kind];
   state.period = defaults.period;
   state.mult = defaults.mult ?? state.mult;
+  state.start = defaults.start ?? state.start;
   el.period.value = String(state.period);
   el.mult.value = String(state.mult);
+  el['ema-start'].value = state.start;
+  el['start-label'].hidden = kind !== 'ema';
   el['mult-label'].hidden = kind !== 'bb';
   buildLines();
   showStatus();
@@ -365,6 +368,7 @@ el.indicator.addEventListener('change', () => selectIndicator(el.indicator.value
 el.source.addEventListener('change', () => { state.source = el.source.value; render(); });
 el.period.addEventListener('input', () => applyParam('period', el.period.valueAsNumber, 'period'));
 el.mult.addEventListener('input', () => applyParam('mult', el.mult.valueAsNumber, 'multiplier'));
+el['ema-start'].addEventListener('change', () => { state.start = el['ema-start'].value; render(); });
 el.scenario.addEventListener('change', () => loadScenario(el.scenario.value));
 for (const id of ['symbol', 'interval']) el[id].addEventListener('change', () => { if (isLive()) loadLive(); });
 el.start.addEventListener('click', startStream);
@@ -411,7 +415,7 @@ window.__app = {
   lineData: (key) => lines.find((l) => l.key === key)?.series.data() ?? [],
   probeLine,
   state: () => ({
-    indicator: state.indicator, source: state.source, period: state.period, mult: state.mult, scenario: state.scenario,
+    indicator: state.indicator, source: state.source, period: state.period, mult: state.mult, start: state.start, scenario: state.scenario,
     bars: state.candles.length, streaming: stream.timer !== null, offline: isOffline(), ticks: stream.ticks,
     live: isLive() && live.conn !== null, rejected: live.rejected, recovered: live.recovered, corrected: live.corrected, resyncs: live.resyncs, symbol: el.symbol.value, interval: el.interval.value,
   }),

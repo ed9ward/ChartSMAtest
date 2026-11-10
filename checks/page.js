@@ -28,18 +28,19 @@ const diffText = (x) => (x === 0 ? '0' : x < 1e-6 ? x.toExponential(1) : x.toFix
 function addStatsRow(stats) {
   $('stats').hidden = false;
   const tr = document.createElement('tr');
-  tr.dataset.testid = `stat-${stats.datasetId}-${stats.indicator.toLowerCase().replace(/\s+/g, '-')}`;
+  tr.dataset.testid = `stat-${stats.datasetId}-${stats.key}`;
   const ok = stats.identical === stats.compared && stats.cents === stats.compared;
-  tr.innerHTML = `<td></td><td></td><td class="num compared"></td><td class="num identical${ok ? ' ok' : ''}"></td>
+  tr.innerHTML = `<td></td><td></td><td class="reference"></td><td class="num compared"></td><td class="num identical${ok ? ' ok' : ''}"></td>
     <td class="num cents${ok ? ' ok' : ''}"></td><td class="num max"></td><td class="num mean"></td>`;
   const cells = tr.children;
   cells[0].textContent = stats.dataset;
   cells[1].textContent = `${stats.indicator} (${stats.series} series)`;
-  cells[2].textContent = stats.compared;
-  cells[3].textContent = `${stats.identical} (${pct(stats.identical, stats.compared)})`;
-  cells[4].textContent = `${stats.cents} (${pct(stats.cents, stats.compared)})`;
-  cells[5].textContent = diffText(stats.maxDiff);
-  cells[6].textContent = diffText(stats.meanDiff);
+  cells[2].textContent = stats.reference;
+  cells[3].textContent = stats.compared;
+  cells[4].textContent = `${stats.identical} (${pct(stats.identical, stats.compared)})`;
+  cells[5].textContent = `${stats.cents} (${pct(stats.cents, stats.compared)})`;
+  cells[6].textContent = diffText(stats.maxDiff);
+  cells[7].textContent = diffText(stats.meanDiff);
   $('stats-body').append(tr);
 }
 

@@ -20,13 +20,28 @@ function values(candles, source) {
   });
 }
 
+export const EMA_STARTS = ['first', 'sma'];
+
+function assertEmaStart(start) {
+  if (!EMA_STARTS.includes(start)) throw new RangeError(`Unknown EMA start: ${start}`);
+}
+
 /**
- * EMA, alpha = 2 / (period + 1). Starts with the SMA of the first `period` values (as TradingView does).
- * A bad value ends the chain; the EMA starts again after `period` good values in a row.
+ * EMA with alpha = 2 / (period + 1): ema = alpha * x + (1 - alpha) * previous. The only thing the platforms disagree
+ * about is where the recursion starts, and it matters for a long time when the history is short:
+ *
+ *   'first' (default)  the first value of the series. This is the reference implementation in the TradingView Pine
+ *                      documentation (`sum := na(sum[1]) ? src : ...`) and what pandas ewm(adjust=False) does.
+ *                      There is a value on every bar.
+ *   'sma'              the average of the first `period` values (TA-Lib). The first value appears on bar `period`.
+ *
+ * The two differ only by a term that shrinks by (1 - alpha) on every bar. A bad value (NaN, null, Infinity) ends the
+ * chain: the next good value starts it again.
  */
-export function computeEMA(candles, period, source = 'close') {
+export function computeEMA(candles, period, source = 'close', start = 'first') {
   assertPeriod(period);
   assertSource(source);
+  assertEmaStart(start);
   const v = values(candles, source);
   const alpha = 2 / (period + 1);
   const out = [];
@@ -36,14 +51,16 @@ export function computeEMA(candles, period, source = 'close') {
   const reset = () => { ema = null; seeded = 0; seedSum = 0; };
   for (let i = 0; i < v.length; i++) {
     if (v[i] === null) { reset(); continue; }
-    if (ema === null) {
+    if (ema !== null) {
+      ema = alpha * v[i] + (1 - alpha) * ema;
+    } else if (start === 'first') {
+      ema = v[i];
+    } else {
       seedSum += v[i];
       if (++seeded < period) continue;
       ema = seedSum / period;
-    } else {
-      ema = alpha * v[i] + (1 - alpha) * ema;
     }
-    if (!Number.isFinite(ema)) { reset(); continue; }
+    if (!Number.isFinite(ema)) { reset(); continue; } // rounding at the very edge of the number range
     out.push({ time: candles[i].time, value: ema });
   }
   return out;
@@ -120,9 +137,9 @@ export const INDICATORS = {
     compute: (c, p, s) => ({ sma: computeSMA(c, p.period, s) }),
   },
   ema: {
-    label: 'EMA', defaults: { period: 20 },
+    label: 'EMA', defaults: { period: 20, start: 'first' },
     lines: [{ key: 'ema', color: '#2962FF', primary: true }],
-    compute: (c, p, s) => ({ ema: computeEMA(c, p.period, s) }),
+    compute: (c, p, s) => ({ ema: computeEMA(c, p.period, s, p.start) }),
   },
   bb: {
     label: 'BB', defaults: { period: 20, mult: 2 },
@@ -143,6 +160,7 @@ export const INDICATORS = {
 export function validateParams(kind, params) {
   assertPeriod(params.period);
   if (kind === 'bb') assertMultiplier(params.mult);
+  if (kind === 'ema' && params.start !== undefined) assertEmaStart(params.start);
 }
 
 /** @returns {Record<string, Array<{time:number, value:number}>>} one point list per line of the indicator */

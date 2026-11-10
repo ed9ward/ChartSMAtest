@@ -26,14 +26,16 @@ test.describe('comparison with TA-Lib', () => {
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
     await expect(page.getByTestId('stats')).toBeVisible();
-    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(8);
+    await expect(page.locator('[data-testid^="stat-"]')).toHaveCount(10);
     for (const dataset of ['real50', 'walk300']) {
-      for (const indicator of ['sma', 'ema', 'bollinger-bands', 'rsi']) {
+      for (const indicator of ['sma', 'ema-first', 'ema-sma', 'bollinger-bands', 'rsi']) {
         const row = page.getByTestId(`stat-${dataset}-${indicator}`);
         await expect(row).toBeVisible();
         const compared = await number(row.locator('.compared'));
         expect(compared).toBeGreaterThan(500);
         await expect(row.locator('.identical')).toHaveText(`${compared} (100%)`);
+        // EMA with the first value as start follows pandas (TradingView's documented formula); every other row is TA-Lib
+        await expect(row.locator('.reference')).toHaveText(indicator === 'ema-first' ? 'pandas' : 'TA-Lib');
         await expect(row.locator('.cents')).toHaveText(`${compared} (100%)`);
         await expect(row.locator('.identical')).toHaveClass(/ok/);
         await expect(row.locator('.max')).toHaveText(/e-1\d$|^0$/); // difference at the 1e-10 rounding of the reference file
@@ -64,7 +66,8 @@ test.describe('comparison with TA-Lib', () => {
     await expect(page.getByTestId('details-talib').locator('li.fail')).toContainText('values differ');
     // the other seven comparisons are unaffected
     await expect(row.locator('xpath=following-sibling::tr').first()).toBeVisible();
-    await expect(page.getByTestId('stat-real50-ema').locator('.identical')).toHaveClass(/ok/);
+    await expect(page.getByTestId('stat-real50-ema-first').locator('.identical')).toHaveClass(/ok/);
+    await expect(page.getByTestId('stat-real50-ema-sma').locator('.identical')).toHaveClass(/ok/);
   });
 
   test('the reference file failing to load is reported, not silently skipped', async ({ page, errors }) => {
@@ -72,7 +75,7 @@ test.describe('comparison with TA-Lib', () => {
     await page.goto('/checks.html');
     await page.getByTestId('include-ui').uncheck();
     await runAndWait(page);
-    await expect(page.getByTestId('verdict')).toHaveText(/8 of \d+ checks failed/);
+    await expect(page.getByTestId('verdict')).toHaveText(/10 of \d+ checks failed/);
     await expect(page.getByTestId('details-talib').locator('li.fail').first()).toContainText('HTTP 404');
     expect(errors).toEqual(['Failed to load resource: the server responded with a status of 404 (Not Found)']);
     errors.length = 0;

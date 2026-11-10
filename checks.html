@@ -72,12 +72,12 @@
         <tbody id="groups" data-testid="groups"></tbody>
       </table>
       <section id="stats" data-testid="stats" hidden>
-        <h2>Our values vs TA-Lib (an independent library) — how many match</h2>
+        <h2>Our values vs independent libraries (TA-Lib, pandas) — how many match</h2>
         <table>
-          <thead><tr><th>Data</th><th>Indicator</th><th class="num">Values compared</th><th class="num">Identical</th><th class="num">To the cent</th><th class="num">Max difference</th><th class="num">Mean difference</th></tr></thead>
+          <thead><tr><th>Data</th><th>Indicator</th><th>Reference</th><th class="num">Values compared</th><th class="num">Identical</th><th class="num">To the cent</th><th class="num">Max difference</th><th class="num">Mean difference</th></tr></thead>
           <tbody id="stats-body"></tbody>
         </table>
-        <div class="hint">"Identical": equal up to floating point noise (1e-8 relative). "To the cent": closer than half a cent (0.005). Binance itself provides no indicator values, so TA-Lib is the outside reference.</div>
+        <div class="hint">"Identical": equal up to floating point noise (1e-8 relative). "To the cent": closer than half a cent (0.005). Binance provides no indicator values, so independent libraries are the outside reference. EMA has two rows because platforms start it differently: pandas follows the TradingView documentation (first value), TA-Lib starts from the SMA of the first N values.</div>
       </section>
       <div id="details" data-testid="details"></div>
     </div>

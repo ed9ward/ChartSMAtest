@@ -82,10 +82,11 @@ describe('the TA-Lib reference file', () => {
   });
 
   for (const dataset of ref.datasets) {
-    for (const indicator of ['sma', 'ema', 'bb', 'rsi']) {
-      it(`${indicator} on ${dataset.id}: every value is identical to TA-Lib`, () => {
-        const s = compareIndicator(dataset, indicator);
+    for (const [indicator, start] of [['sma'], ['ema', 'first'], ['ema', 'sma'], ['bb'], ['rsi']]) {
+      it(`${indicator}${start ? ` (${start} start)` : ''} on ${dataset.id}: every value is identical to the reference library`, () => {
+        const s = compareIndicator(dataset, indicator, start);
         expect(s.compared).toBeGreaterThan(500);
+        expect(s.reference).toBe(start === 'first' ? 'pandas' : 'TA-Lib');
         expect(s.missing).toBe(0);
         expect(s.extra).toBe(0);
         expect(s.identical).toBe(s.compared);
@@ -94,6 +95,21 @@ describe('the TA-Lib reference file', () => {
       });
     }
   }
+
+  it('the EMA with the first value as start really differs from TA-Lib at the start, by exactly the decaying seed term', () => {
+    const d = ref.datasets[0];
+    const times = d.candles.map((c) => c.time);
+    const find = (seed) => d.series.find((x) => x.indicator === 'ema' && x.seed === seed && x.source === 'close' && x.period === 20);
+    const pandas = find('first').lines.ema;   // from index 0
+    const talib = find('sma').lines.ema;      // from index 19
+    const a = 2 / 21;
+    const gap0 = pandas[19] - talib[19];
+    expect(Math.abs(gap0)).toBeGreaterThan(1);                 // visible, not rounding noise
+    for (let t = 19; t < times.length; t++) expect(pandas[t] - talib[t]).toBeCloseTo((1 - a) ** (t - 19) * gap0, 7);
+    // and our two starts reproduce both libraries
+    expect(compareLine(computeIndicator('ema', d.candles, { period: 20, start: 'first' }, 'close').ema, pandas, times).identical).toBe(times.length);
+    expect(compareLine(computeIndicator('ema', d.candles, { period: 20, start: 'sma' }, 'close').ema, talib, times).identical).toBe(times.length - 19);
+  });
 
   it('the comparison notices a wrong implementation (period shifted by one)', () => {
     const d = ref.datasets[0];

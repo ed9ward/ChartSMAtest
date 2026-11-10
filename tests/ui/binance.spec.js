@@ -351,12 +351,24 @@ test.describe('leaving live mode', () => {
 
 test.describe('other indicators on real data', () => {
   // Golden values calculated outside JavaScript (Python, Decimal) from the same 50 bars.
-  test('EMA 20 and 5', async ({ page }) => {
+  test('EMA 20 and 5 (first value as start, the default)', async ({ page }) => {
     await goLive(page, await mockBinance(page));
     await page.getByTestId('indicator').selectOption('ema');
+    await expect(page.getByTestId('last-sma')).toHaveText('73342.91');
+    await page.getByTestId('period').fill('5');
+    await expect(page.getByTestId('last-sma')).toHaveText('73429.15');
+  });
+
+  test('EMA with the SMA start (TA-Lib) differs by 3.33 dollars at period 20 and not at period 5', async ({ page }) => {
+    await goLive(page, await mockBinance(page));
+    await page.getByTestId('indicator').selectOption('ema');
+    await page.getByTestId('ema-start').selectOption('sma');
     await expect(page.getByTestId('last-sma')).toHaveText('73346.25');
     await page.getByTestId('period').fill('5');
     await expect(page.getByTestId('last-sma')).toHaveText('73429.15');
+    await page.getByTestId('ema-start').selectOption('first');
+    await page.getByTestId('period').fill('20');
+    await expect(page.getByTestId('last-sma')).toHaveText('73342.91');
   });
 
   test('Bollinger (20, 2) and (10, 3)', async ({ page }) => {

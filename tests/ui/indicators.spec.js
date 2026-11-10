@@ -10,7 +10,7 @@ const fmt = (n) => n.toFixed(2);
 
 const KINDS = {
   sma: { label: 'SMA', period: 20, keys: ['sma'], panes: 1, ref: (c, p, s) => ({ sma: refSMA(c, p.period, s) }) },
-  ema: { label: 'EMA', period: 20, keys: ['ema'], panes: 1, ref: (c, p, s) => ({ ema: refEMA(c, p.period, s) }) },
+  ema: { label: 'EMA', period: 20, keys: ['ema'], panes: 1, ref: (c, p, s) => ({ ema: refEMA(c, p.period, s, p.start) }) },
   bb: { label: 'BB', period: 20, keys: ['basis', 'upper', 'lower'], panes: 1, ref: (c, p, s) => refBB(c, p.period, p.mult ?? 2, s) },
   rsi: { label: 'RSI', period: 14, keys: ['rsi'], panes: 2, ref: (c, p, s) => ({ rsi: refRSI(c, p.period, s) }) },
 };
@@ -41,6 +41,7 @@ for (const [kind, info] of Object.entries(KINDS)) {
       await expect(page.getByTestId('legend-label')).toHaveText(info.label);
       await expect(page.getByTestId('period')).toHaveValue(String(info.period));
       await expect(page.getByTestId('mult')).toBeVisible({ visible: kind === 'bb' });
+      await expect(page.getByTestId('ema-start')).toBeVisible({ visible: kind === 'ema' });
       expect(await lineKeys(page)).toEqual(info.keys);
       expect(await paneCount(page)).toBe(info.panes);
       await expect(page.getByTestId('status')).toHaveText('OK');
@@ -129,6 +130,94 @@ for (const [kind, info] of Object.entries(KINDS)) {
     });
   });
 }
+
+test.describe('EMA start', () => {
+  test('defaults to the first value (TradingView) and offers the TA-Lib start', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await expect(page.getByTestId('ema-start')).toHaveValue('first');
+    expect(await page.getByTestId('ema-start').locator('option').allTextContents()).toEqual(['First value (TradingView)', 'SMA of first N (TA-Lib)']);
+    expect(await page.evaluate(() => window.__app.state().start)).toBe('first');
+  });
+
+  test('the first-value start has a point on every bar, the SMA start from bar `period`', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    expect(await lineData(page, 'ema')).toHaveLength(60);
+    await page.getByTestId('ema-start').selectOption('sma');
+    expect(await lineData(page, 'ema')).toHaveLength(41);
+  });
+
+  for (const start of ['first', 'sma']) {
+    for (const period of [5, 20, 60]) {
+      test(`${start} start, period ${period} matches the reference`, async ({ page }) => {
+        await open(page);
+        await pick(page, 'ema');
+        await page.getByTestId('ema-start').selectOption(start);
+        await page.getByTestId('period').fill(String(period));
+        expectSeriesClose(await lineData(page, 'ema'), refEMA(NORMAL, period, 'close', start));
+      });
+    }
+
+    test(`${start} start: the line is drawn at the right height`, async ({ page }) => {
+      await open(page);
+      await pick(page, 'ema');
+      await page.getByTestId('ema-start').selectOption(start);
+      await expectLineAt(page);
+    });
+
+    test(`${start} start: live ticks keep the line correct`, async ({ page }) => {
+      await open(page);
+      await pick(page, 'ema', { source: 'hlc3' });
+      await page.getByTestId('ema-start').selectOption(start);
+      await page.evaluate(() => { for (let i = 0; i < 12; i++) window.__app.step(); });
+      expectSeriesClose(await lineData(page, 'ema'), refEMA(expectedBars(60, 12), 20, 'hlc3', start));
+    });
+  }
+
+  test('the start is kept when the period or the source changes, and the legend follows it', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await page.getByTestId('ema-start').selectOption('sma');
+    await page.getByTestId('period').fill('9');
+    await page.getByTestId('source').selectOption('ohlc4');
+    await expect(page.getByTestId('ema-start')).toHaveValue('sma');
+    const want = refEMA(NORMAL, 9, 'ohlc4', 'sma').at(-1).value;
+    await expect(page.getByTestId('last-sma')).toHaveText(fmt(want));
+  });
+
+  test('a long period on a short history: the two starts give clearly different last values', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema', { period: 40 });
+    const first = (await lineData(page, 'ema')).at(-1).value;
+    await page.getByTestId('ema-start').selectOption('sma');
+    const sma = (await lineData(page, 'ema')).at(-1).value;
+    expect(Math.abs(first - sma)).toBeGreaterThan(0.05);
+    expect(first).toBeCloseTo(refEMA(NORMAL, 40, 'close', 'first').at(-1).value, 6);
+    expect(sma).toBeCloseTo(refEMA(NORMAL, 40, 'close', 'sma').at(-1).value, 6);
+  });
+
+  test('selecting EMA again returns to the default start; other indicators do not show the selector', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema');
+    await page.getByTestId('ema-start').selectOption('sma');
+    await pick(page, 'sma');
+    await expect(page.getByTestId('ema-start')).toBeHidden();
+    await pick(page, 'ema');
+    await expect(page.getByTestId('ema-start')).toHaveValue('first');
+    expectSeriesClose(await lineData(page, 'ema'), refEMA(NORMAL, 20, 'close', 'first'));
+  });
+
+  test('strange data works with both starts', async ({ page }) => {
+    await open(page);
+    await pick(page, 'ema', { scenario: 'nan' });
+    for (const start of ['first', 'sma']) {
+      await page.getByTestId('ema-start').selectOption(start);
+      const expected = sanitizeCandles(SCENARIOS.nan()).candles;
+      expectSeriesClose(await lineData(page, 'ema'), refEMA(expected, 20, 'close', start));
+    }
+  });
+});
 
 test.describe('Bollinger multiplier', () => {
   test('visible only for Bollinger Bands', async ({ page }) => {

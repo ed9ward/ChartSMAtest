@@ -24,17 +24,22 @@ export function refSMA(candles, period, source) {
   return out;
 }
 
-// EMA written as acc + k * (x - acc); seeded with the mean of the first `period` values.
-export function refEMA(candles, period, source) {
+// EMA written in closed form, without recursion:
+//   'first': y[t] = (1-a)^t * x[0] + a * sum over k < t of (1-a)^k * x[t-k]      (the first value starts the chain)
+//   'sma'  : the same weights on the bars after the first `period`, started from the mean of the first `period` values
+export function refEMA(candles, period, source, start = 'first') {
   const xs = xsOf(candles, source);
-  if (xs.length < period) return [];
-  const k = 2 / (period + 1);
-  let acc = mean(xs.slice(0, period));
-  const out = [{ time: candles[period - 1].time, value: acc }];
-  xs.slice(period).forEach((x, i) => {
-    acc += k * (x - acc);
-    out.push({ time: candles[period + i].time, value: acc });
-  });
+  const a = 2 / (period + 1);
+  const from = start === 'first' ? 0 : period - 1; // index of the first value
+  if (xs.length <= from) return [];
+  const base = start === 'first' ? xs[0] : mean(xs.slice(0, period));
+  const out = [];
+  for (let t = from; t < xs.length; t++) {
+    const n = t - from; // bars after the start
+    let sum = 0;
+    for (let k = 0; k < n; k++) sum += (1 - a) ** k * xs[t - k];
+    out.push({ time: candles[t].time, value: (1 - a) ** n * base + a * sum });
+  }
   return out;
 }
 
