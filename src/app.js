@@ -339,9 +339,16 @@ function scheduleRetry(reason) {
 // Once a second: is the connection alive, and has it been alive long enough to count as healthy?
 function watchConnection() {
   if (!live.conn || !live.provider) return;
-  const silent = Date.now() - live.lastActivity;
+  const now = Date.now();
+  const age = now - live.connectedAt;
+  // Binance expires a WebSocket connection after 24 hours. Rotate proactively
+  // and reload REST history so the handover cannot leave a silent data gap.
+  if (live.provider.maxConnectionMs && age >= live.provider.maxConnectionMs) {
+    return scheduleRetry('scheduled connection refresh');
+  }
+  const silent = now - live.lastActivity;
   if (silent > live.provider.staleMs) return scheduleRetry(`no data for ${Math.round(silent / 1000)} s`);
-  if (live.attempt > 0 && Date.now() - live.connectedAt > STABLE_MS) live.attempt = 0;
+  if (live.attempt > 0 && age > STABLE_MS) live.attempt = 0;
 }
 setInterval(watchConnection, 1000);
 
