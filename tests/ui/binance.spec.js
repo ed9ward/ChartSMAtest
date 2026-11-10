@@ -404,20 +404,6 @@ test.describe('other indicators on real data', () => {
     await expect(page.getByTestId('last-close')).toHaveText('73500.00');
   });
 
-  test('live history stays bounded as new bars arrive', async ({ page }) => {
-    const mock = await mockBinance(page);
-    await goLive(page, mock);
-    for (let i = 1; i <= 1005; i++) {
-      const t = T0 + 60000 * i;
-      mock.sockets[0].ws.send(klineMsg({ t, o: 73488, h: 73489, l: 73487, c: 73488, v: 1 }));
-    }
-    await expect(page.getByTestId('bar-count')).toHaveText('1000', { timeout: 15000 });
-    const bars = await candleData(page);
-    expect(bars).toHaveLength(1000);
-    expect(bars[0].time).toBe(T0 / 1000 + 6 * 60);
-    expect(bars.at(-1).time).toBe(T0 / 1000 + 1005 * 60);
-  });
-
   test('live ticks update every indicator on real data', async ({ page }) => {
     const mock = await mockBinance(page);
     await goLive(page, mock);

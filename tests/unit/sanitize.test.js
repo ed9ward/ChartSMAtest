@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeCandles, validateCandle, MAX_ABS_PRICE } from '../../src/sanitize.js';
+import { sanitizeCandles, validateCandle, MAX_ABS_PRICE, appendBoundedCandle } from '../../src/sanitize.js';
 import { generateCandles } from '../../src/generator.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 
@@ -44,6 +44,20 @@ describe('sanitizeCandles', () => {
     const r = sanitizeCandles(input);
     expect(r.candles).toEqual([]);
     expect(r.issues.length).toBeGreaterThan(0);
+  });
+  it('keeps only the newest bounded number of candles and reports trimming', () => {
+    const bars = [{ time: 1 }, { time: 2 }, { time: 3 }];
+    expect(appendBoundedCandle(bars, { time: 4 }, 3)).toBe(true);
+    expect(bars.map((bar) => bar.time)).toEqual([2, 3, 4]);
+    expect(appendBoundedCandle(bars, { time: 5 }, 3)).toBe(true);
+    expect(bars.map((bar) => bar.time)).toEqual([3, 4, 5]);
+    expect(appendBoundedCandle(bars, { time: 6 }, 4)).toBe(false);
+    expect(bars.map((bar) => bar.time)).toEqual([3, 4, 5, 6]);
+  });
+  it('rejects invalid history limits', () => {
+    for (const limit of [0, -1, 1.5, NaN, Infinity, '3']) {
+      expect(() => appendBoundedCandle([], { time: 1 }, limit)).toThrow(RangeError);
+    }
   });
   it('reports missing candle intervals without inventing synthetic bars', () => {
     const data = [

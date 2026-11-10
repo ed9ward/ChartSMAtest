@@ -1,6 +1,6 @@
 import { SOURCES } from './sma.js';
 import { INDICATORS, computeIndicator, validateParams, settleBars, minBars } from './indicators.js';
-import { sanitizeCandles, validateCandle } from './sanitize.js';
+import { sanitizeCandles, validateCandle, appendBoundedCandle } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
 import { INTERVAL_SECONDS, utcDay, dayChangePercent, formatPercent } from './live.js';
@@ -346,15 +346,6 @@ function watchConnection() {
 }
 setInterval(watchConnection, 1000);
 
-function appendLiveCandle(candle) {
-  state.candles.push(candle);
-  if (state.candles.length > MAX_LIVE_CANDLES) {
-    state.candles.splice(0, state.candles.length - MAX_LIVE_CANDLES);
-    return true;
-  }
-  return false;
-}
-
 function closeLive() {
   live.gen++; // any answer still in flight is now stale
   cancelRetry();
@@ -454,7 +445,7 @@ function onLiveKline(gen, candle, interval, correction = false, closed = false) 
   let trimmed = false;
   if (!last || candle.time === last.time) {
     if (last) state.candles[state.candles.length - 1] = candle;
-    else trimmed = appendLiveCandle(candle);
+    else trimmed = appendBoundedCandle(state.candles, candle, MAX_LIVE_CANDLES);
   } else if (candle.time > last.time + INTERVAL_SECONDS[interval] && live.provider.reloadOnBarGap) {
     loadLive(); // Binance bars may have been missed (sleep, network): take the history again
     return;
@@ -462,7 +453,7 @@ function onLiveKline(gen, candle, interval, correction = false, closed = false) 
     if (!live.provider.reloadOnBarGap) {
       live.gaps += Math.max(0, Math.round((candle.time - last.time) / INTERVAL_SECONDS[interval]) - 1);
     }
-    trimmed = appendLiveCandle(candle);
+    trimmed = appendBoundedCandle(state.candles, candle, MAX_LIVE_CANDLES);
   } else {
     return; // older than what we already have
   }

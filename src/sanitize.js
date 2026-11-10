@@ -63,3 +63,18 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
   if (candles.length === 0) issues.push('no data to display');
   return { candles, issues };
 }
+
+/**
+ * Append a candle while keeping only the newest `limit` entries.
+ * Mutates the supplied array and returns true when old entries were removed.
+ */
+export function appendBoundedCandle(candles, candle, limit) {
+  if (!Array.isArray(candles)) throw new TypeError('candles must be an array');
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive safe integer');
+  candles.push(candle);
+  if (candles.length > limit) {
+    candles.splice(0, candles.length - limit);
+    return true;
+  }
+  return false;
+}
