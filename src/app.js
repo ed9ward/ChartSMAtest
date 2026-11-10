@@ -1,5 +1,6 @@
 import { SOURCES } from './sma.js';
-import { INDICATORS, computeIndicator, validateParams, settleBars, minBars } from './indicators.js';
+import { INDICATORS, validateParams, settleBars, minBars } from './indicators.js';
+import { createIndicatorEngine } from './indicator-engine.js';
 import { sanitizeCandles, validateCandle, appendBoundedCandle } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
@@ -32,7 +33,7 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
 });
 
-const state = { decimals: { price: 2, lines: {} }, candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, start: 'first', scenario: 'normal', issues: [], updatedAt: null };
+const state = { decimals: { price: 2, lines: {} }, candles: [], indicatorEngine: null, indicator: 'sma', source: 'close', period: 20, mult: 2, start: 'first', scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const RETRY_BASE_MS = 1000;   // first attempt after a second, then 2, 4, 8, 16, 30, 30, ...
 const RETRY_MAX_MS = 30_000;
@@ -49,7 +50,6 @@ function params() {
   const period = BUG === 'offbyone' ? Math.max(1, state.period - 1) : state.period;
   return { period, mult: state.mult, start: state.start };
 }
-const points = () => computeIndicator(state.indicator, state.candles, params(), state.source);
 
 function setStatus(text, isError = false) {
   el.status.textContent = text;
@@ -160,7 +160,8 @@ function applyPrecision(pts) {
 // fit: show all bars (new data); false keeps the range the user zoomed to (a changed setting).
 function render({ fit = true } = {}) {
   candleSeries.setData(state.candles);
-  const pts = points();
+  state.indicatorEngine = createIndicatorEngine(state.indicator, state.candles, params(), state.source);
+  const pts = state.indicatorEngine.data();
   for (const l of lines) l.series.setData(pts[l.key]);
   applyPrecision(pts);
   if (fit) chart.timeScale().fitContent();
@@ -172,10 +173,10 @@ function paintLast(candle, fullRedraw = false) {
   touch();
   if (fullRedraw) { render({ fit: false }); return; }
   candleSeries.update(candle);
-  const pts = points();
+  const latest = state.indicatorEngine.upsert(candle);
   for (const l of lines) {
-    const last = pts[l.key].at(-1);
-    if (last?.time === candle.time) l.series.update(last);
+    const point = latest[l.key];
+    if (point) l.series.update(point);
   }
   updateLegend();
 }
