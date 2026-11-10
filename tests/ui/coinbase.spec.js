@@ -181,6 +181,14 @@ test.describe('Coinbase history is limited to 300 candles', () => {
     await expect(page.getByTestId('settle-note')).toBeHidden();
   });
 
+  test('clean empty intervals are normal for Coinbase and do not produce gap warnings', async ({ page }) => {
+    const sparse = CB_ROWS.filter((_, index) => index % 5 !== 0);
+    const mock = await mockCoinbase(page, () => ({ body: sparse }));
+    await goLive(page, mock);
+    await expect(page.getByTestId('bar-count')).toHaveText(String(sparse.length));
+    await expect(status(page)).toHaveText('Live BTC-USD 1m');
+  });
+
   test('asking for more than 300 is cut to 300, not an error', async ({ page }) => {
     const mock = await mockCoinbase(page, () => ({ body: [...rows300, ...rows300.map((r) => [r[0] - 60 * 300, ...r.slice(1)])] })); // 600 rows
     await goLive(page, mock);
