@@ -25,12 +25,14 @@
     <label>Period <input id="period" data-testid="period" type="number" value="20"></label>
     <label>Data
       <select id="scenario" data-testid="scenario">
-        <option>normal</option><option>negative</option><option>huge</option><option>overflow</option>
+        <option>normal</option><option>long</option><option>negative</option><option>huge</option><option>overflow</option>
         <option>nan</option><option>duplicates</option><option>unordered</option><option>empty</option>
       </select>
     </label>
     <button id="start" data-testid="start">Start stream</button>
     <button id="stop" data-testid="stop">Stop</button>
+    <button id="disconnect" data-testid="disconnect">Disconnect feed</button>
+    <button id="reconnect" data-testid="reconnect">Reconnect feed</button>
   </div>
   <div id="legend" class="row" data-testid="legend">
     <span>Bars: <b id="bar-count" data-testid="bar-count">0</b></span>

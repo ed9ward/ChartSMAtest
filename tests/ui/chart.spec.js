@@ -2,8 +2,7 @@ import { test, expect, open, smaData, candleData, text, probeSmaLine } from './f
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
-import { generateCandles, partialCandle } from '../../src/generator.js';
-import { refSMA, expectSeriesClose } from '../unit/helpers.js';
+import { refSMA, expectSeriesClose, expectedBars } from '../unit/helpers.js';
 
 const normal = SCENARIOS.normal();
 const fmt = (n) => n.toFixed(2);
@@ -112,13 +111,7 @@ test.describe('visual check on the real canvas', () => {
 });
 
 test.describe('realtime updates', () => {
-  const full = generateCandles({ seed: 42, count: 1000 });
-  const expectedAfter = (steps) => {
-    const bars = full.slice(0, 60 + Math.ceil(steps / 5));
-    const k = steps % 5 === 0 ? 5 : steps % 5;
-    if (steps > 0) bars[bars.length - 1] = partialCandle(full[bars.length - 1], k, 5);
-    return bars;
-  };
+  const expectedAfter = (steps) => expectedBars(60, steps);
 
   test('one tick opens a new bar, further ticks only update it', async ({ page }) => {
     await open(page);

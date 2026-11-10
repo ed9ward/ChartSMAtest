@@ -106,3 +106,15 @@ describe('realtime: incremental update equals full recompute', () => {
     expect(smaAt(candles, 500, 5, 'close')).toBeNull();
   });
 });
+
+describe('long series', () => {
+  const long = generateCandles({ seed: 42, count: 2000 });
+  it.each([['close', 200], ['ohlc4', 50], ['volume', 1999]])('%s, period %i matches the reference', (source, period) => {
+    expectSeriesClose(computeSMA(long, period, source), refSMA(long, period, source));
+  });
+  it('2000 bars with period 200 are computed fast', () => {
+    const t = performance.now();
+    computeSMA(long, 200, 'ohlc4');
+    expect(performance.now() - t).toBeLessThan(200);
+  });
+});

@@ -1,3 +1,6 @@
+import { generateCandles, partialCandle } from '../../src/generator.js';
+import { TICKS_PER_CANDLE } from '../../src/feed.js';
+
 // Independent reference implementation used as the "expected" value in tests.
 // Deliberately written differently from src/sma.js (slice + reduce, no shared code).
 export function refSource(c, source) {
@@ -31,4 +34,16 @@ export function expectSeriesClose(actual, expected, digits = 6) {
       throw new Error(`value mismatch at ${i}: got ${p.value}, expected ${expected[i].value}`);
     }
   });
+}
+
+// Candles the chart should hold after `steps` live ticks started from `start` bars (5 ticks per candle).
+
+const FULL = generateCandles({ seed: 42, count: 3000 });
+
+export function expectedBars(start, steps) {
+  if (steps === 0) return FULL.slice(0, start);
+  const bars = FULL.slice(0, start + Math.ceil(steps / TICKS_PER_CANDLE));
+  const k = steps % TICKS_PER_CANDLE === 0 ? TICKS_PER_CANDLE : steps % TICKS_PER_CANDLE;
+  bars[bars.length - 1] = partialCandle(FULL[bars.length - 1], k, TICKS_PER_CANDLE);
+  return bars;
 }
