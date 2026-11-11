@@ -119,7 +119,7 @@ export async function fetchTrades({
   if (afterTradeId !== null && (!Number.isSafeInteger(throughTradeId) || throughTradeId < afterTradeId)) {
     throw new RangeError('throughTradeId must be a safe integer >= afterTradeId');
   }
-  if (!Number.isInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive integer');
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive safe integer');
 
   const collected = new Map();
   let cursor = null;
@@ -178,7 +178,7 @@ export async function fetchTradesForBucket({
   if (Math.floor(lastTrade.time / intervalSeconds) * intervalSeconds !== bucketStart) {
     throw new RangeError('lastTrade does not belong to the requested bucket');
   }
-  if (!Number.isInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive integer');
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive safe integer');
 
   const collected = new Map([[lastTrade.tradeId, lastTrade]]);
   let cursor = lastTrade.tradeId;
@@ -340,7 +340,8 @@ export function openStream({
 
   const recover = async () => {
     if (recovering || gaveUp || closedByUs || lastId === null) return;
-    const target = Math.max(lastId, heartbeatId ?? 0, ...ahead.keys());
+    let target = Math.max(lastId, heartbeatId ?? 0);
+    for (const tradeId of ahead.keys()) target = Math.max(target, tradeId);
     if (target <= lastId) return; // the missing trades arrived in the meantime
     recovering = true;
     try {

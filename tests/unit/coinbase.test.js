@@ -208,6 +208,18 @@ describe('fetchTrades', () => {
     expect(trades[0].tradeId).toBe(1);
     expect(trades.at(-1).tradeId).toBe(1002);
   });
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '2'])('rejects unsafe bootstrap maxPages %s before a request', async (maxPages) => {
+    let called = false;
+    await expect(fetchTradesForBucket({
+      symbol: 'BTC-USD',
+      lastTrade: { tradeId: 2, price: 101, size: 1, time: BASE + 10 },
+      bucketStart: BASE,
+      intervalSeconds: 60,
+      maxPages,
+      fetchFn: async () => { called = true; return ok([]); },
+    })).rejects.toThrow(RangeError);
+    expect(called).toBe(false);
+  });
   it('fails closed when the configured pagination bound is exhausted', async () => {
     const all = Array.from({ length: 3000 }, (_, i) => ({
       trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
@@ -224,6 +236,14 @@ describe('fetchTrades', () => {
         return ok(page);
       },
     })).rejects.toThrow('trade recovery exceeds 2000 REST records');
+  });
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '2'])('rejects unsafe maxPages %s before a request', async (maxPages) => {
+    let called = false;
+    await expect(fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 1, throughTradeId: 2, maxPages,
+      fetchFn: async () => { called = true; return ok([]); },
+    })).rejects.toThrow(RangeError);
+    expect(called).toBe(false);
   });
   it('drops broken rows; errors are reported', async () => {
     expect(await fetchTrades({ symbol: 'X', fetchFn: async () => ok([rows[0], null, { trade_id: 'x' }, {}, { ...rows[0], trade_id: 13, size: '0' }]) })).toHaveLength(1);
