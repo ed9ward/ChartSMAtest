@@ -376,6 +376,8 @@ export function openStream({
       if (closedByUs) return;
       if (current && bucket < current.time) {
         // The REST snapshot is newer than this delayed first message; keep the newer seed.
+      } else if (trades.length === 1 && current && current.time === bucket) {
+        // No older trades exist in this bucket. The REST candle seed already contains the same last trade.
       } else {
         if (current && bucket > current.time && reconcileDelayMs !== null) reconcile({ ...current });
         current = candleFromTrades(trades, bucket);
