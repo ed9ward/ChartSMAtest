@@ -36,25 +36,28 @@ function nextCandle(previous, offset, adjustment = 0) {
 
 describe('createIndicatorEngine', () => {
   for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
-    for (const source of ['close', 'volume', 'hlc3']) {
-      it(`${kind} / ${source}: append and replace the forming candle matches the pure reference`, () => {
-        const initial = generateCandles({ seed: 71, count: 80 });
-        const params = paramsFor(kind);
-        const engine = createIndicatorEngine(kind, initial, params, source);
+    for (const source of SOURCES) {
+      const starts = kind === 'ema' ? ['first', 'sma'] : [undefined];
+      for (const start of starts) {
+        it(`${kind} / ${source} / ${start ?? 'default'}: append and replace the forming candle matches the pure reference`, () => {
+          const initial = generateCandles({ seed: 71, count: 80 });
+          const params = { ...paramsFor(kind), ...(start ? { start } : {}) };
+          const engine = createIndicatorEngine(kind, initial, params, source);
 
-        const appended = nextCandle(initial.at(-1), 1);
-        engine.upsert(appended);
-        expectSame(engine.data(), computeIndicator(kind, [...initial, appended], params, source));
+          const appended = nextCandle(initial.at(-1), 1);
+          engine.upsert(appended);
+          expectSame(engine.data(), computeIndicator(kind, [...initial, appended], params, source));
 
-        // Repeated updates to one forming candle must replace its prior contribution, not compound it.
-        const revised = nextCandle(initial.at(-1), 1, 2.5);
-        engine.upsert(revised);
-        expectSame(engine.data(), computeIndicator(kind, [...initial, revised], params, source));
+          // Repeated updates to one forming candle must replace its prior contribution, not compound it.
+          const revised = nextCandle(initial.at(-1), 1, 2.5);
+          engine.upsert(revised);
+          expectSame(engine.data(), computeIndicator(kind, [...initial, revised], params, source));
 
-        const following = nextCandle(revised, 1, -1.25);
-        engine.upsert(following);
-        expectSame(engine.data(), computeIndicator(kind, [...initial, revised, following], params, source));
-      });
+          const following = nextCandle(revised, 1, -1.25);
+          engine.upsert(following);
+          expectSame(engine.data(), computeIndicator(kind, [...initial, revised, following], params, source));
+        });
+      }
     }
   }
 
@@ -71,6 +74,24 @@ describe('createIndicatorEngine', () => {
     }
   });
 
+  it('replacing an invalid forming candle restores the prior state for every indicator', () => {
+    const initial = generateCandles({ seed: 23, count: 45 });
+    for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
+      const params = paramsFor(kind);
+      const engine = createIndicatorEngine(kind, initial, params, 'close');
+      const invalid = { ...nextCandle(initial.at(-1), 1), close: NaN };
+      engine.upsert(invalid);
+      expectSame(engine.data(), computeIndicator(kind, [...initial, invalid], params, 'close'));
+
+      const repaired = nextCandle(initial.at(-1), 1, 3);
+      engine.upsert(repaired);
+      expectSame(engine.data(), computeIndicator(kind, [...initial, repaired], params, 'close'));
+
+      const following = nextCandle(repaired, 1, -0.5);
+      engine.upsert(following);
+      expectSame(engine.data(), computeIndicator(kind, [...initial, repaired, following], params, 'close'));
+    }
+  });
   it('rejects an out-of-order candle; historical corrections require a rebuild', () => {
     const initial = generateCandles({ seed: 4, count: 20 });
     const engine = createIndicatorEngine('sma', initial, { period: 5 }, 'close');
