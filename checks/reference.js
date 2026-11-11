@@ -91,9 +91,11 @@ export function compareSeries(actual, expected, digits = 6) {
   if (actual.length !== expected.length) {
     throw new Error(`length mismatch: got ${actual.length}, expected ${expected.length}`);
   }
+  const scale = Math.max(0, ...expected.filter((p) => Number.isFinite(p.value)).map((p) => Math.abs(p.value)));
   actual.forEach((p, i) => {
     if (p.time !== expected[i].time) throw new Error(`time mismatch at ${i}: ${p.time} vs ${expected[i].time}`);
-    const tol = Math.max(1, Math.abs(expected[i].value)) * 10 ** -digits;
+    // Relative tolerance follows the line's scale, including when its values are much smaller than 1.
+    const tol = Math.max(Math.abs(expected[i].value), 1e-3 * scale) * 10 ** -digits;
     if (!(Math.abs(p.value - expected[i].value) <= tol)) {
       throw new Error(`value mismatch at ${i}: got ${p.value}, expected ${expected[i].value}`);
     }
