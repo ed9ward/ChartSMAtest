@@ -50,7 +50,8 @@ export function computeSMA(candles, period, source = 'close') {
     else sum += window[slot];
 
     if (i < period - 1 || invalid > 0) continue;
-    const average = Number.isFinite(sum) ? sum / period : window.reduce((total, v) => total + v / period, 0);
+    if (!Number.isFinite(sum)) sum = window.reduce((total, v) => total + v, 0);
+    const average = sum / period;
     if (Number.isFinite(average)) out.push({ time: candles[i].time, value: average });
   }
   return out;

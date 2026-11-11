@@ -24,7 +24,8 @@ function calculate(kind, previous, candle, params, source) {
   if (kind === 'sma') {
     const window = [...previous.window, input].slice(-period);
     if (window.length !== period || window.some((v) => v === null)) return { state: { window }, points: {} };
-    const average = mean(window);
+    const total = window.reduce((sum, value) => sum + value, 0);
+    const average = total / period;
     return { state: { window }, points: finite(average) ? { sma: { time: candle.time, value: average } } : {} };
   }
 

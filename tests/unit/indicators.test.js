@@ -196,9 +196,11 @@ describe('Bollinger Bands', () => {
     // the bad value is bar 6: windows ending at bars 6, 7 and 8 contain it
     expect(computeBB(data, 3, 2).basis.map((p) => p.time)).toEqual([3, 4, 5, 9, 10]);
   });
-  it('overflow gives a gap, not Infinity', () => {
+  it('scaled statistics keep a constant maximum-value window finite', () => {
     const r = computeBB(closes([Number.MAX_VALUE, Number.MAX_VALUE]), 2, 2);
-    expect(r.upper).toEqual([]);
+    expect(r.basis).toEqual([{ time: 2, value: Number.MAX_VALUE }]);
+    expect(r.upper).toEqual(r.basis);
+    expect(r.lower).toEqual(r.basis);
   });
 });
 
