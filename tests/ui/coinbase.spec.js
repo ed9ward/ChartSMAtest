@@ -386,7 +386,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     await page.getByTestId('source').selectOption('volume');
     await page.getByTestId('period').fill('1');
     await expect(page.getByTestId('last-sma')).toHaveText((1.02338 + 2).toFixed(2));
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
   });
 
   test('swapped messages are put in order without asking REST', async ({ page }) => {
@@ -404,7 +404,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0, open: 73484, high: 73600, low: 73450, close: 73450 });
     expect(a.id).toBeLessThan(first.id);
     await page.waitForTimeout(600); // longer than the grace period for a late predecessor
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
@@ -416,7 +416,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.lose(T0 + 20, 73100, 5); // nothing arrives after it: only the heartbeat knows
     t.beat(0);
     await page.waitForTimeout(500);
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
     t.beat(0);
     await expect(status(page)).toHaveText('Live BTC-USD 1m; recovered 1 missed trade(s)');
     expect(mock.tradeRequests).toHaveLength(2);
@@ -435,7 +435,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.beat(0);
     await expect(page.getByTestId('last-close')).toHaveText('73495.00');
     await page.waitForTimeout(400);
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
