@@ -14,7 +14,7 @@ const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
  * Negative prices are allowed (some instruments have them); the OHLC rules still apply to them.
  */
 export function validateCandle(c) {
-  if (!c || !isNum(c.time) || ![c.open, c.high, c.low, c.close].every(isNum) || !isNum(c.volume)) return 'invalid';
+  if (!c || !Number.isSafeInteger(c.time) || c.time < 0 || ![c.open, c.high, c.low, c.close].every(isNum) || !isNum(c.volume)) return 'invalid';
   if ([c.open, c.high, c.low, c.close].some((p) => Math.abs(p) > MAX_ABS_PRICE)) return 'range';
   // high >= max(open, close) and low <= min(open, close) also give high >= low
   if (c.high < Math.max(c.open, c.close) || c.low > Math.min(c.open, c.close) || c.volume < 0) return 'inconsistent';
