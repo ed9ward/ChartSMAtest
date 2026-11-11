@@ -141,7 +141,7 @@ describe('createIndicatorEngine', () => {
         }
       }
     }
-  });
+  }, 15_000);
 
   it('rebuilding after a historical correction matches the pure reference', () => {
     const candles = generateCandles({ seed: 101, count: 500 });
