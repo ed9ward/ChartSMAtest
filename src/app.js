@@ -38,7 +38,7 @@ const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const RETRY_BASE_MS = 1000;   // first attempt after a second, then 2, 4, 8, 16, 30, 30, ...
 const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 10_000;     // a connection that lived this long counts as healthy: the next loss starts again at one second
-const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, closedThrough: null, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 
@@ -71,6 +71,7 @@ function showStatus() {
     live.recovered && `recovered ${live.recovered} missed trade(s)`,
     live.corrected && `corrected ${live.corrected} candle(s) from the exchange`,
     live.reconcileFailures && `could not verify ${live.reconcileFailures} closed candle(s)`,
+    live.bootstrapFailures && `could not fully rebuild ${live.bootstrapFailures} startup candle(s)`,
     live.resyncs && `resynced ${live.resyncs} time(s)`,
   ];
   const text = [base, ...state.issues, ...notes].filter(Boolean).join('; ');
@@ -357,7 +358,7 @@ function closeLive() {
   live.gen++; // any answer still in flight is now stale
   cancelRetry();
   live.conn?.close();
-  Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, closedThrough: null, resyncs: 0, prevClose: null, dayIndex: null });
+  Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, resyncs: 0, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
@@ -390,7 +391,7 @@ async function loadLive({ auto = false } = {}) {
     Object.assign(live, { symbol, provider, lastActivity: Date.now(), connectedAt: Date.now() });
     loadDay(gen, provider, symbol, interval);
     live.conn = provider.openStream({
-      symbol, interval, seed: lastCandle(),
+      symbol, interval, seed: lastCandle(), bootstrapBucket: provider.bootstrapBucket,
       onActivity: () => { if (gen === live.gen) live.lastActivity = Date.now(); },
       onKline: ({ candle, correction, closed }) => onLiveKline(gen, candle, interval, correction, closed),
       onEvent: ({ type, count }) => {
@@ -398,6 +399,7 @@ async function loadLive({ auto = false } = {}) {
         if (type === 'recovered') live.recovered += count;
         if (type === 'duplicate') live.duplicates++;
         if (type === 'reconcile-failed') live.reconcileFailures++;
+        if (type === 'bootstrap-failed') live.bootstrapFailures++;
         showStatus();
       },
       // missed trades could not be fetched: take everything again, and say so
