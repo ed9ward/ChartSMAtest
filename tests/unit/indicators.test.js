@@ -351,6 +351,13 @@ describe('settleBars: how much history a recursive indicator needs to forget whe
     expect(settleBars('ema', 20, { tolerance: 1e-6 })).toBeGreaterThan(settleBars('ema', 20));
     expect(settleBars('ema', 20, { tolerance: 1e-1 })).toBeLessThan(settleBars('ema', 20));
   });
+  it.each([0, -1, 1, 1.1, NaN, Infinity, -Infinity, '0.001'])('rejects invalid settling tolerance %s', (tolerance) => {
+    expect(() => settleBars('ema', 20, { tolerance })).toThrow(RangeError);
+    expect(() => settleBars('rsi', 14, { tolerance })).toThrow(RangeError);
+  });
+  it('rejects an invalid EMA seed when calculating settling history', () => {
+    expect(() => settleBars('ema', 20, { start: 'unknown' })).toThrow(RangeError);
+  });
   it('grows with the period', () => {
     for (const kind of ['ema', 'rsi']) {
       let previous = 0;
