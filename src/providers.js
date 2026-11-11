@@ -19,6 +19,7 @@ export const PROVIDERS = {
     historyBars: 300,        // Coinbase allows 300 candles per request
     reloadOnBarGap: false,   // trades are tracked by id, so a minute without trades is just a minute without trades
     sparseHistory: true,     // Coinbase publishes no candle for an interval with no ticks
+    bootstrapBucket: true,   // rebuild the forming candle from trades after the first last_match watermark
     staleMs: 10_000,         // heartbeats come every second
     fetchHistory: coinbase.fetchHistory,
     openStream: coinbase.openStream,
