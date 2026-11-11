@@ -77,7 +77,7 @@ const toTrade = (tradeId, price, size, time, last = false) => {
   size = toNumber(size);
   time = parseTradeTimestamp(time);
   if (!Number.isSafeInteger(tradeId) || tradeId < 0 || !Number.isFinite(price) || price <= 0) return null;
-  if (!Number.isFinite(size) || size < 0 || !Number.isFinite(time)) return null;
+  if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(time)) return null;
   return { tradeId, price, size, time, last };
 };
 
