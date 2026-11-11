@@ -192,7 +192,10 @@ export function settleBars(kind, period, { start = 'first', tolerance = 1e-3 } =
 export function minBars(kind, period, { start = 'first' } = {}) {
   assertPeriod(period);
   if (kind === 'rsi') return period + 1;                       // `period` changes need `period` + 1 prices
-  if (kind === 'ema') return start === 'sma' ? period : 1;     // the SMA start waits for a full window; the first-value start does not
+  if (kind === 'ema') {
+    assertEmaStart(start);
+    return start === 'sma' ? period : 1;                       // the SMA start waits for a full window; the first-value start does not
+  }
   return period;                                               // SMA and Bollinger Bands: one full window
 }
 
