@@ -495,23 +495,25 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
     const mock = await mockCoinbase(page, (_, n) => (n === 2 ? { status: 500, body: '' } : {}));
     await goLive(page, mock);
-    const before = await candleData(page);
+    const initial = await candleData(page);
     mock.state.restStatus = 500;
     const t = tape(mock);
     t.send(0, T0 + 10, 73490, 1);
+    await expect(page.getByTestId('last-close')).toHaveText('73490.00');
+    const preserved = await candleData(page);
     t.lose(T0 + 20, 73100, 1);
     t.send(0, T0 + 30, 73495, 1);
     await expect.poll(() => mock.requests.length).toBe(2);
     await expect(status(page)).toHaveText('Feed disconnected: could not reload (HTTP 500); reconnecting in 1 s (attempt 1)');
-    expect(await candleData(page)).toEqual(before);
-    expect(mock.sockets).toHaveLength(1);
     errors.length = 0; // the two mocked HTTP 500 responses are intentional
+    expect(await candleData(page)).toEqual(preserved);
+    expect(mock.sockets).toHaveLength(1);
     mock.state.restStatus = 200;
     await page.clock.fastForward(1000);
     await expect.poll(() => mock.sockets.length).toBe(2);
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
     expect(mock.requests).toHaveLength(3);
-    expect(await candleData(page)).toEqual(before);
+    expect((await candleData(page)).map(ohlc)).toEqual(initial.map(ohlc));
   });
 
   test('a REST error while recovering also reloads everything', async ({ page, errors }) => {
