@@ -394,6 +394,7 @@ export function openStream({
     } finally {
       bootstrapping = false;
       const buffered = bootstrapBuffer.splice(0).sort((a, b) => a.tradeId - b.tradeId);
+      if (closedByUs) return;
       for (const pending of buffered) accept(pending);
       if (!closedByUs && !gaveUp && heartbeatId !== null && heartbeatId > lastId && behind >= 2) recover();
     }
@@ -448,7 +449,7 @@ export function openStream({
 
   ws.onmessage = (message) => {
     onActivity?.(); // any message at all shows that the connection is alive (heartbeats come every second)
-    if (gaveUp) return;
+    if (closedByUs || gaveUp) return;
     const msg = asObject(message.data);
     if (msg?.type === 'error') return void onError?.(msg.message || msg.reason || 'error');
     const trade = parseMatch(msg, { symbol });
