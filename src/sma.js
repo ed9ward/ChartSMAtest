@@ -11,11 +11,11 @@ export function sourceValue(candle, source) {
     case 'volume':
       return candle[source];
     case 'hl2':
-      return (candle.high + candle.low) / 2;
+      return candle.high / 2 + candle.low / 2;
     case 'hlc3':
-      return (candle.high + candle.low + candle.close) / 3;
+      return candle.high / 3 + candle.low / 3 + candle.close / 3;
     case 'ohlc4':
-      return (candle.open + candle.high + candle.low + candle.close) / 4;
+      return candle.open / 4 + candle.high / 4 + candle.low / 4 + candle.close / 4;
     default:
       throw new Error(`Unknown SMA source: ${source}`);
   }
@@ -50,8 +50,7 @@ export function computeSMA(candles, period, source = 'close') {
     else sum += window[slot];
 
     if (i < period - 1 || invalid > 0) continue;
-    if (!Number.isFinite(sum)) sum = window.reduce((total, v) => total + v, 0);
-    const average = sum / period;
+    const average = Number.isFinite(sum) ? sum / period : window.reduce((total, v) => total + v / period, 0);
     if (Number.isFinite(average)) out.push({ time: candles[i].time, value: average });
   }
   return out;

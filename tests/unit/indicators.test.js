@@ -11,6 +11,22 @@ const candle = (time, close, extra = {}) => ({ time, open: close, high: close, l
 const closes = (xs) => xs.map((x, i) => candle(i + 1, x));
 const values = (pts) => pts.map((p) => p.value);
 
+describe('numeric stability', () => {
+  it('computes SMA and Bollinger Bands for very large and very small finite values', () => {
+    for (const scale of [1e-200, 1e200]) {
+      const data = Array.from({ length: 8 }, (_, i) => {
+        const close = scale * (1 + i / 100);
+        return { time: i, open: close, high: close * 1.02, low: close * 0.98, close, volume: scale };
+      });
+      const sma = computeIndicator('sma', data, { period: 4 }, 'close').sma;
+      const bb = computeBB(data, 4, 2, 'close');
+      expect(sma.length).toBe(5);
+      expect(bb.basis.length).toBe(5);
+      expect([...sma, ...bb.upper, ...bb.basis, ...bb.lower].every((point) => Number.isFinite(point.value))).toBe(true);
+    }
+  });
+});
+
 describe('EMA', () => {
   for (const start of ['first', 'sma']) {
     for (const source of SOURCES) {

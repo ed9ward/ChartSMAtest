@@ -1,6 +1,7 @@
 // Indicators over a chosen price source. Pure functions, no DOM.
 // Formulas follow TradingView's ta.* functions so values can be compared with its charts.
 import { SOURCES, sourceValue, assertPeriod, computeSMA } from './sma.js';
+import { mean, populationStdDev } from './statistics.js';
 
 function assertSource(source) {
   if (!SOURCES.includes(source)) throw new Error(`Unknown source: ${source}`);
@@ -47,8 +48,8 @@ export function computeEMA(candles, period, source = 'close', start = 'first') {
   const out = [];
   let ema = null;
   let seeded = 0;
-  let seedSum = 0;
-  const reset = () => { ema = null; seeded = 0; seedSum = 0; };
+  let seedMean = 0;
+  const reset = () => { ema = null; seeded = 0; seedMean = 0; };
   for (let i = 0; i < v.length; i++) {
     if (v[i] === null) { reset(); continue; }
     if (ema !== null) {
@@ -56,9 +57,9 @@ export function computeEMA(candles, period, source = 'close', start = 'first') {
     } else if (start === 'first') {
       ema = v[i];
     } else {
-      seedSum += v[i];
+      seedMean += (v[i] - seedMean) / (seeded + 1);
       if (++seeded < period) continue;
-      ema = seedSum / period;
+      ema = seedMean;
     }
     if (!Number.isFinite(ema)) { reset(); continue; } // rounding at the very edge of the number range
     out.push({ time: candles[i].time, value: ema });
@@ -76,14 +77,14 @@ export function computeBB(candles, period, mult = 2, source = 'close') {
   for (let end = period - 1; end < v.length; end++) {
     const window = v.slice(end - period + 1, end + 1);
     if (window.includes(null)) continue;
-    const mean = window.reduce((a, b) => a + b, 0) / period;
-    const sd = Math.sqrt(window.reduce((a, b) => a + (b - mean) ** 2, 0) / period);
-    const upper = mean + mult * sd;
-    const lower = mean - mult * sd;
-    if (![mean, upper, lower].every(Number.isFinite)) continue;
+    const basis = mean(window);
+    const sd = populationStdDev(window);
+    const upper = basis + mult * sd;
+    const lower = basis - mult * sd;
+    if (![basis, sd, upper, lower].every(Number.isFinite)) continue;
     const time = candles[end].time;
     out.upper.push({ time, value: upper });
-    out.basis.push({ time, value: mean });
+    out.basis.push({ time, value: basis });
     out.lower.push({ time, value: lower });
   }
   return out;
@@ -118,17 +119,19 @@ export function computeRSI(candles, period, source = 'close') {
     if (prev === null) { prev = v[i]; continue; }
     const change = v[i] - prev;
     prev = v[i];
+    if (!Number.isFinite(change)) { reset(); prev = v[i]; continue; }
     const gain = Math.max(change, 0);
     const loss = Math.max(-change, 0);
     if (avgGain === null) {
-      sumGain += gain;
-      sumLoss += loss;
+      const nextChanges = changes + 1;
+      sumGain += (gain - sumGain) / nextChanges;
+      sumLoss += (loss - sumLoss) / nextChanges;
       if (++changes < period) continue;
-      avgGain = sumGain / period;
-      avgLoss = sumLoss / period;
+      avgGain = sumGain;
+      avgLoss = sumLoss;
     } else {
-      avgGain = (avgGain * (period - 1) + gain) / period;
-      avgLoss = (avgLoss * (period - 1) + loss) / period;
+      avgGain = avgGain * ((period - 1) / period) + gain / period;
+      avgLoss = avgLoss * ((period - 1) / period) + loss / period;
     }
     const rsi = avgLoss === 0 ? 100 : avgGain === 0 ? 0 : 100 - 100 / (1 + avgGain / avgLoss);
     if (!Number.isFinite(rsi)) { reset(); continue; }

@@ -119,11 +119,11 @@ describe('parseMatch', () => {
   });
   it.each([
     ['invalid JSON', '{nope'], ['empty string', ''], ['null', 'null'], ['a ticker', msg({ type: 'ticker' })], ['a heartbeat', { type: 'heartbeat', product_id: 'BTC-USD' }],
-    ['other product', msg({ product_id: 'ETH-USD' })], ['broken price', msg({ price: 'x' })], ['zero price', msg({ price: '0' })], ['negative price', msg({ price: '-5' })],
+    ['other product', msg({ product_id: 'ETH-USD' })], ['broken price', msg({ price: 'x' })], ['zero price', msg({ price: '0' })], ['negative price', msg({ price: '-5' })], ['overflowing price', msg({ price: '1e309' })],
     ['missing price', msg({ price: undefined })], ['broken size', msg({ size: 'abc' })], ['broken time', msg({ time: 'yesterday' })], ['missing time', msg({ time: undefined })],
     ['missing trade id', msg({ trade_id: undefined })], ['fractional trade id', msg({ trade_id: 1.5 })], ['negative trade id', msg({ trade_id: -1 })],
     ['text trade id', msg({ trade_id: 'abc' })], ['null trade id', msg({ trade_id: null })], ['empty trade id', msg({ trade_id: '' })],
-    ['null size', msg({ size: null })], ['empty size', msg({ size: '' })], ['null price', msg({ price: null })], ['numeric time', msg({ time: 1700000000 })],
+    ['null size', msg({ size: null })], ['empty size', msg({ size: '' })], ['overflowing size', msg({ size: '1e309' })], ['null price', msg({ price: null })], ['numeric time', msg({ time: 1700000000 })],
     ['date without time', msg({ time: '2026-11-10' })], ['timestamp without timezone', msg({ time: '2026-11-10T16:34:51' })],
     ['invalid calendar date', msg({ time: '2026-02-30T16:34:51Z' })], ['invalid clock time', msg({ time: '2026-11-10T25:34:51Z' })],
   ])('ignores %s', (_, data) => {
@@ -442,6 +442,14 @@ describe('stream: building candles from trades', () => {
     expect(t.candles[0].time % g).toBe(0);
     expect(BASE + 51 - t.candles[0].time).toBeLessThan(g);
   });
+  it.each(Object.entries(COINBASE_GRANULARITY))('a trade exactly on the %s boundary starts the next candle', (interval, granularity) => {
+    const start = Math.floor(BASE / granularity) * granularity;
+    const secondsToBoundary = start + granularity - BASE;
+    const t = setup({ interval });
+    t.send(lastMatch(0, secondsToBoundary - 1, 100));
+    t.send(match(1, secondsToBoundary, 110));
+    expect(t.candles.at(-1)).toMatchObject({ time: start + granularity, open: 110, close: 110 });
+  });
   it('the day candle starts at midnight UTC', () => {
     const t = setup({ interval: '1d' });
     t.send({ data: JSON.stringify({ type: 'last_match', product_id: 'BTC-USD', trade_id: 0, price: '1', size: '1', time: '2026-11-10T23:59:00Z' }) });
@@ -688,6 +696,41 @@ describe('stream: lost trades are fetched from REST', () => {
   });
 });
 
+  it('rejects a recovery gap larger than the configured pending-trade bound', () => {
+    const t = setup({ maxBufferedTrades: 2 });
+    t.send(lastMatch(0));
+    t.send(match(4, 4, 104));
+    expect(t.resyncs).toEqual(['Coinbase recovery gap exceeds 2 pending trades']);
+    t.send(match(5, 5, 105));
+    expect(t.candles).toEqual([]);
+  });
+  it('deduplicates startup-buffered matches and aborts bootstrap when its bound is exceeded', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const t = setup({
+      maxBufferedTrades: 1, bootstrapBucket: true,
+      fetchFn: async (_url, { signal } = {}) => {
+        await Promise.race([gate, new Promise((resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))]);
+        return ok([]);
+      },
+    });
+    t.send(lastMatch(0));
+    t.send(match(1, 1, 101));
+    t.send(match(1, 1, 101));
+    t.send(match(2, 2, 102));
+    expect(t.resyncs).toEqual(['Coinbase startup buffer exceeds 1 pending trades']);
+    release();
+    await flush();
+    expect(t.candles).toEqual([]);
+  });
+  it('does not emit a candle when adding a trade would overflow accumulated volume', () => {
+    const seed = { time: BASE, open: 1, high: 1, low: 1, close: 1, volume: Number.MAX_VALUE };
+    const t = setup({ seed });
+    t.send(lastMatch(0));
+    t.send(match(1, 1, 2, Number.MAX_VALUE));
+    expect(t.resyncs).toEqual(['Coinbase candle volume overflow']);
+    expect(t.candles).toEqual([]);
+  });
 describe('stream: when the missing trades cannot be fetched', () => {
   it('trades that REST does not have any more: a resync is requested and the feed stops', async () => {
     const t = setup({ trades: [[1, 1, 100, 1]] }); // 2 and 3 are not known to REST

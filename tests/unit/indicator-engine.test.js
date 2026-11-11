@@ -16,7 +16,9 @@ function expectSame(actual, expected) {
   for (const key of Object.keys(expected)) {
     expect(actual[key].map((point) => point.time)).toEqual(expected[key].map((point) => point.time));
     actual[key].forEach((point, index) => {
-      expect(point.value).toBeCloseTo(expected[key][index].value, 10);
+      const expectedValue = expected[key][index].value;
+      const tolerance = 1e-10 * Math.max(Math.abs(point.value), Math.abs(expectedValue), 1e-300);
+      expect(Math.abs(point.value - expectedValue)).toBeLessThanOrEqual(tolerance);
     });
   }
 }
@@ -106,6 +108,63 @@ describe('createIndicatorEngine', () => {
       const params = paramsFor(kind);
       const engine = createIndicatorEngine(kind, candles, params, 'close');
       expectSame(engine.data(), computeIndicator(kind, candles, params, 'close'));
+    }
+  });
+
+  it('matches the pure reference on long randomized histories with gaps and invalid inputs', () => {
+    for (const seed of [3, 17, 91]) {
+      let state = seed;
+      const random = () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 0x100000000; };
+      let time = 1_800_000_000;
+      const candles = Array.from({ length: 1200 }, (_, i) => {
+        time += random() < 0.04 ? 300 : 60;
+        const close = 50 + random() * 1000;
+        const open = close + (random() - 0.5) * 10;
+        const candle = { time, open, high: Math.max(open, close) + random() * 5,
+          low: Math.min(open, close) - random() * 5, close, volume: random() * 100 };
+        if (i % 173 === 0) candle.close = NaN;
+        return candle;
+      });
+      for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
+        for (const source of SOURCES) {
+          const params = { ...paramsFor(kind), period: kind === 'rsi' ? 9 : 13,
+            ...(kind === 'ema' ? { start: seed % 2 ? 'first' : 'sma' } : {}) };
+          const engine = createIndicatorEngine(kind, candles, params, source);
+          expectSame(engine.data(), computeIndicator(kind, candles, params, source));
+          const previous = candles.at(-1);
+          for (const adjustment of [-3, 0.5, 2, -1]) {
+            const revised = { ...previous, close: previous.close + adjustment,
+              high: previous.high + Math.max(0, adjustment), low: previous.low + Math.min(0, adjustment) };
+            engine.upsert(revised);
+            expectSame(engine.data(), computeIndicator(kind, [...candles.slice(0, -1), revised], params, source));
+          }
+        }
+      }
+    }
+  });
+
+  it('rebuilding after a historical correction matches the pure reference', () => {
+    const candles = generateCandles({ seed: 101, count: 500 });
+    const corrected = candles.map((candle) => ({ ...candle }));
+    corrected[211] = { ...corrected[211], close: corrected[211].close + 17, high: corrected[211].high + 17 };
+    for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
+      const rebuilt = createIndicatorEngine(kind, corrected, paramsFor(kind), 'close');
+      expectSame(rebuilt.data(), computeIndicator(kind, corrected, paramsFor(kind), 'close'));
+    }
+  });
+
+  it('keeps tiny and very large finite price scales numerically stable', () => {
+    for (const scale of [1e-200, 1e200]) {
+      const candles = Array.from({ length: 40 }, (_, i) => {
+        const close = scale * (1 + i / 100);
+        return { time: i * 60, open: close, high: close * 1.01, low: close * 0.99, close, volume: scale };
+      });
+      for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
+        const params = { ...paramsFor(kind), period: 5, ...(kind === 'ema' ? { start: 'sma' } : {}) };
+        const engine = createIndicatorEngine(kind, candles, params, 'close');
+        expectSame(engine.data(), computeIndicator(kind, candles, params, 'close'));
+        for (const points of Object.values(engine.data())) for (const point of points) expect(Number.isFinite(point.value)).toBe(true);
+      }
     }
   });
 

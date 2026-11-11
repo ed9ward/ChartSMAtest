@@ -14,6 +14,7 @@ export const COINBASE_REST = 'https://api.exchange.coinbase.com';
 export const COINBASE_WS = 'wss://ws-feed.exchange.coinbase.com';
 export const MAX_CANDLES = 300;
 export const MAX_TRADES = 1000; // trades per REST request
+export const MAX_BUFFERED_TRADES = 10_000; // hard ceiling for pending live matches
 
 export function parseCandleRow(row, interval = null) {
   if (!Array.isArray(row) || row.length < 6) return null;
@@ -110,8 +111,8 @@ export function parseHeartbeat(data, { symbol } = {}) {
 /**
  * Fetch recent trades, oldest first. When afterTradeId is supplied, walk the
  * Exchange cursor pages newer than that id until the complete requested range
- * is covered. Cursor values are trade IDs, so this does not depend on browser
- * JavaScript being allowed to read Coinbase's CB-AFTER / CB-BEFORE headers.
+ * is covered. Coinbase supplies opaque pagination cursors in the CB-AFTER
+ * response header; do not synthesize them from trade IDs.
  */
 export async function fetchTrades({
   symbol, signal, fetchFn = fetch, afterTradeId = null, throughTradeId = Infinity, maxPages = 10,
@@ -178,6 +179,9 @@ export async function fetchTradesForBucket({
   if (Math.floor(lastTrade.time / intervalSeconds) * intervalSeconds !== bucketStart) {
     throw new RangeError('lastTrade does not belong to the requested bucket');
   }
+  if (![lastTrade.price, lastTrade.size, lastTrade.time].every(Number.isFinite) || lastTrade.price <= 0 || lastTrade.size <= 0) {
+    throw new RangeError('lastTrade must contain finite positive price/size and a finite timestamp');
+  }
   if (!Number.isSafeInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive safe integer');
 
   return withTimeout(async (requestSignal) => {
@@ -221,14 +225,18 @@ export async function fetchTradesForBucket({
   }, { signal });
 }
 
-const candleFromTrades = (trades, bucketStart) => ({
-  time: bucketStart,
-  open: trades[0].price,
-  high: Math.max(...trades.map((trade) => trade.price)),
-  low: Math.min(...trades.map((trade) => trade.price)),
-  close: trades[trades.length - 1].price,
-  volume: trades.reduce((sum, trade) => sum + trade.size, 0),
-});
+const candleFromTrades = (trades, bucketStart) => {
+  let high = -Infinity;
+  let low = Infinity;
+  let volume = 0;
+  for (const trade of trades) {
+    high = Math.max(high, trade.price);
+    low = Math.min(low, trade.price);
+    volume += trade.size;
+    if (!Number.isFinite(volume)) throw new RangeError('Coinbase candle volume overflow');
+  }
+  return { time: bucketStart, open: trades[0].price, high, low, close: trades[trades.length - 1].price, volume };
+};
 
 // Keep a small absolute floor for floating-point accumulation, but scale the relative tolerance to the values.
 // A floor of 1 would hide real differences in fractional trade sizes and candle volume.
@@ -255,7 +263,11 @@ export function openStream({
   symbol, interval, onKline, onClose, onError, onEvent, onResync, onActivity, seed,
   WS = WebSocket, fetchFn = fetch, graceMs = 300, reconcileDelayMs = 2000,
   reconcileAttempts = 3, reconcileRetryMs = 1000, applyLastMatchWhenUnseeded = true, bootstrapBucket = false, signal: parentSignal,
+  maxBufferedTrades = MAX_BUFFERED_TRADES,
 }) {
+  if (!Number.isSafeInteger(maxBufferedTrades) || maxBufferedTrades < 1 || maxBufferedTrades > MAX_BUFFERED_TRADES) {
+    throw new RangeError(`maxBufferedTrades must be an integer between 1 and ${MAX_BUFFERED_TRADES}`);
+  }
   const granularity = COINBASE_GRANULARITY[interval];
   const ws = new WS(COINBASE_WS);
   let closedByUs = false;
@@ -272,7 +284,7 @@ export function openStream({
   let current = seed ? { ...seed } : null;
   let lastId = null;          // newest trade applied to the candle
   let bootstrapping = false;
-  const bootstrapBuffer = [];
+  const bootstrapBuffer = new Map();
   let behind = 0;             // heartbeats in a row that were ahead of lastId
   let heartbeatId = null;     // newest trade id a heartbeat reported
   let recovering = false;
@@ -286,6 +298,13 @@ export function openStream({
     timers.add(timer);
   };
   const event = (type, extra = {}) => onEvent?.({ type, ...extra });
+  const failStream = (reason) => {
+    if (gaveUp || closedByUs) return;
+    gaveUp = true;
+    abortController.abort();
+    event('resync-required', { reason });
+    onResync?.(reason);
+  };
 
   // The exchange's version of a closed candle replaces ours when they differ. Transient REST
   // failures and temporarily missing candles are retried a bounded number of times.
@@ -328,15 +347,20 @@ export function openStream({
         close: trade.price,
         volume: current.volume + trade.size,
       };
+      if (!Number.isFinite(current.volume)) {
+        failStream('Coinbase candle volume overflow');
+        return false;
+      }
     }
     onKline({ candle: { ...current } });
+    return true;
   };
 
   const drain = () => {
     while (ahead.has(lastId + 1)) {
       const trade = ahead.get(lastId + 1);
       ahead.delete(lastId + 1);
-      apply(trade);
+      if (!apply(trade)) return;
       lastId = trade.tradeId;
     }
   };
@@ -346,6 +370,10 @@ export function openStream({
     let target = Math.max(lastId, heartbeatId ?? 0);
     for (const tradeId of ahead.keys()) target = Math.max(target, tradeId);
     if (target <= lastId) return; // the missing trades arrived in the meantime
+    if (target - lastId > maxBufferedTrades || ahead.size > maxBufferedTrades) {
+      failStream(`Coinbase recovery gap exceeds ${maxBufferedTrades} pending trades`);
+      return;
+    }
     recovering = true;
     try {
       const fromRest = new Map((await fetchTrades({ symbol, fetchFn, signal: abortController.signal, afterTradeId: lastId, throughTradeId: target })).map((t) => [t.tradeId, t]));
@@ -356,7 +384,7 @@ export function openStream({
         if (!trade) throw new Error(`trade ${id} is not available any more`);
         if (!ahead.has(id)) fetched++;
         ahead.delete(id);
-        apply(trade);
+        if (!apply(trade)) return;
         lastId = id;
       }
       // Preserve a newer heartbeat watermark received while this REST request was in flight.
@@ -365,8 +393,7 @@ export function openStream({
       if (fetched) event('recovered', { count: fetched, upTo: lastId });
       drain();
     } catch (e) {
-      gaveUp = true;
-      if (!closedByUs) onResync?.(e.message);
+      failStream(e instanceof Error ? e.message : String(e));
     } finally {
       recovering = false;
     }
@@ -392,7 +419,7 @@ export function openStream({
         onKline({ candle: { ...current } });
       }
     } catch (error) {
-      if (!closedByUs) {
+      if (!closedByUs && !gaveUp) {
         // A very busy bucket or a transient REST failure must not stop the live feed.
         // Fall back to the previous safe baseline behavior; the closed candle is later
         // reconciled against Coinbase's candle endpoint.
@@ -402,16 +429,24 @@ export function openStream({
       }
     } finally {
       bootstrapping = false;
-      const buffered = bootstrapBuffer.splice(0).sort((a, b) => a.tradeId - b.tradeId);
-      if (closedByUs) return;
+      const buffered = [...bootstrapBuffer.values()].sort((a, b) => a.tradeId - b.tradeId);
+      bootstrapBuffer.clear();
+      if (closedByUs || gaveUp) return;
       for (const pending of buffered) accept(pending);
       if (!closedByUs && !gaveUp && heartbeatId !== null && heartbeatId > lastId && behind >= 2) recover();
     }
   };
 
   const accept = (trade) => {
+    if (closedByUs || gaveUp) return;
     if (bootstrapping) {
-      if (trade.tradeId > lastId && !bootstrapBuffer.some((item) => item.tradeId === trade.tradeId)) bootstrapBuffer.push(trade);
+      if (trade.tradeId > lastId && !bootstrapBuffer.has(trade.tradeId)) {
+        if (bootstrapBuffer.size >= maxBufferedTrades) {
+          failStream(`Coinbase startup buffer exceeds ${maxBufferedTrades} pending trades`);
+          return;
+        }
+        bootstrapBuffer.set(trade.tradeId, trade);
+      }
       return;
     }
     if (lastId === null) { // the first message fixes where we are
@@ -429,9 +464,13 @@ export function openStream({
     }
     if (trade.tradeId <= lastId || ahead.has(trade.tradeId)) return void event('duplicate', { tradeId: trade.tradeId });
     if (trade.tradeId === lastId + 1) {
-      apply(trade);
+      if (!apply(trade)) return;
       lastId = trade.tradeId;
       drain();
+      return;
+    }
+    if (trade.tradeId - lastId > maxBufferedTrades || ahead.size >= maxBufferedTrades) {
+      failStream(`Coinbase recovery gap exceeds ${maxBufferedTrades} pending trades`);
       return;
     }
     ahead.set(trade.tradeId, trade);
