@@ -73,6 +73,8 @@ export const MUTANTS = [
   { id: 'coinbase-trades-of-closed-candles-applied', file: 'src/coinbase.js', from: '    if (current && bucket < current.time) return; // belongs to a candle that is already closed\n', to: '' },
   { id: 'coinbase-wrong-channel', file: 'src/coinbase.js', from: "{ name: 'matches', product_ids: [symbol] }", to: "{ name: 'ticker', product_ids: [symbol] }" },
   { id: 'coinbase-null-is-a-number', file: 'src/coinbase.js', from: 'const toNumber = (x) => parseFiniteNumber(x) ?? NaN;', to: 'const toNumber = (x) => Number(x);' },
+  { id: 'coinbase-startup-bucket-not-rebuilt', file: 'src/coinbase.js', from: 'current = candleFromTrades(trades, bucket);', to: 'current = current ?? candleFromTrades(trades, bucket);' },
+  { id: 'coinbase-startup-buffer-dropped', file: 'src/coinbase.js', from: 'bootstrapBuffer.push(trade);', to: 'void trade;' },
   { id: 'coinbase-zero-size-trade-accepted', file: 'src/coinbase.js', from: 'size <= 0', to: 'size < 0' },
   { id: 'coinbase-limit-ignored', file: 'src/coinbase.js', from: 'const result = candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));', to: 'const result = candles;' },
   { id: 'coinbase-history-not-sorted', file: 'src/coinbase.js', from: 'candles.sort((a, b) => a.time - b.time);', to: 'candles.sort(() => 0);' },
