@@ -242,7 +242,8 @@ const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k
 /**
  * Opens the feed and turns trades into candles of the chosen timeframe.
  *
- * - seed: the newest candle of the history; a candle already under way is continued, not restarted.
+ * - seed: the newest candle of the history; on startup, last_match establishes a trade-ID boundary and the forming
+ *   bucket is rebuilt from REST trades before buffered live matches are applied.
  * - Every trade must have the next trade id. A trade that arrives too early is held back: if its predecessors show up
  *   within `graceMs` (reordering) they are applied in order, otherwise they are fetched from REST. Repeated or old
  *   trades are ignored.
@@ -389,13 +390,7 @@ export function openStream({
       // reconciled against Coinbase's candle endpoint.
       event('bootstrap-failed', { reason: error instanceof Error ? error.message : String(error) });
       const bucket = Math.floor(trade.time / granularity) * granularity;
-      if (!current || bucket > current.time) {
-        apply(trade);
-      } else if (bucket === current.time && !trade.last) {
-        apply(trade);
-      } else if (!current && applyLastMatchWhenUnseeded) {
-        apply(trade);
-      }
+      if (!current || bucket > current.time) apply(trade);
     } finally {
       bootstrapping = false;
       const buffered = bootstrapBuffer.splice(0).sort((a, b) => a.tradeId - b.tradeId);
