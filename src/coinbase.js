@@ -386,12 +386,14 @@ export function openStream({
         onKline({ candle: { ...current } });
       }
     } catch (error) {
-      // A very busy bucket or a transient REST failure must not stop the live feed.
-      // Fall back to the previous safe baseline behavior; the closed candle is later
-      // reconciled against Coinbase's candle endpoint.
-      event('bootstrap-failed', { reason: error instanceof Error ? error.message : String(error) });
-      const bucket = Math.floor(trade.time / granularity) * granularity;
-      if (!current || bucket > current.time) apply(trade);
+      if (!closedByUs) {
+        // A very busy bucket or a transient REST failure must not stop the live feed.
+        // Fall back to the previous safe baseline behavior; the closed candle is later
+        // reconciled against Coinbase's candle endpoint.
+        event('bootstrap-failed', { reason: error instanceof Error ? error.message : String(error) });
+        const bucket = Math.floor(trade.time / granularity) * granularity;
+        if (!current || bucket > current.time) apply(trade);
+      }
     } finally {
       bootstrapping = false;
       const buffered = bootstrapBuffer.splice(0).sort((a, b) => a.tradeId - b.tradeId);

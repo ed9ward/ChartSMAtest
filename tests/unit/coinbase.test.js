@@ -323,20 +323,32 @@ describe('stream: subscription and baseline', () => {
     expect(restUrls(t)).toEqual([]);
     expect(t.candles).toEqual([]);
   });
-  it('does not emit buffered startup matches after the stream closes during REST bootstrap', async () => {
-    let release;
-    const gate = new Promise((resolve) => { release = resolve; });
+  it('aborts startup bootstrap on close without emitting a fallback candle or event', async () => {
+    let requestSignal;
     const t = setup({
       seed: { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 },
       bootstrapBucket: true,
-      fetchFn: async () => { await gate; return ok([]); },
+      fetchFn: async (_url, { signal } = {}) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
     });
     t.send(lastMatch(5, 10, 100));
     t.send(match(6, 12, 110, 2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestSignal).toBeDefined();
     t.conn.close();
-    release();
     await flush();
+    expect(requestSignal.aborted).toBe(true);
     expect(t.candles).toEqual([]);
+    expect(t.events).toEqual([]);
+    expect(t.resyncs).toEqual([]);
   });
   it('keeps the REST seed if the only trade in the startup bucket is last_match', async () => {
     const seed = { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 };
