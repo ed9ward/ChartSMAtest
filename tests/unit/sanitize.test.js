@@ -115,6 +115,16 @@ describe('sanitizeCandles', () => {
     const r = sanitizeCandles([good[0], null, 5, { time: 'a' }, good[1]]);
     expect(r.candles).toHaveLength(2);
   });
+  it('drops fractional and unsafe timestamps even without a timeframe constraint', () => {
+    const invalid = [
+      { ...good[0], time: 1.5 },
+      { ...good[1], time: Number.MAX_SAFE_INTEGER + 1 },
+      { ...good[2], time: -1 },
+    ];
+    const r = sanitizeCandles([good[3], ...invalid, good[4]]);
+    expect(r.candles.map((c) => c.time)).toEqual([good[3].time, good[4].time]);
+    expect(r.issues).toContain('dropped 3 invalid candle(s)');
+  });
 });
 
 const candle = (over = {}) => ({ time: 1000, open: 100, high: 110, low: 90, close: 105, volume: 5, ...over });
@@ -163,6 +173,7 @@ describe('validateCandle', () => {
     ['NaN price', { open: NaN }], ['Infinity', { high: Infinity }], ['-Infinity', { low: -Infinity }], ['null price', { close: null }],
     ['string price', { open: '100' }], ['undefined price', { high: undefined }], ['NaN volume', { volume: NaN }],
     ['missing volume', { volume: undefined }], ['string volume', { volume: '5' }], ['NaN time', { time: NaN }], ['missing time', { time: undefined }],
+    ['fractional time', { time: 1000.5 }], ['unsafe integer time', { time: Number.MAX_SAFE_INTEGER + 1 }], ['negative time', { time: -1 }],
   ])('rejects %s as invalid', (_, over) => {
     expect(validateCandle(candle(over))).toBe('invalid');
   });
