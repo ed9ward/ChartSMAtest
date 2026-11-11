@@ -80,7 +80,7 @@ describe('createIndicatorEngine', () => {
   it('matches pure calculations across invalid source values and sparse timestamps', () => {
     const candles = generateCandles({ seed: 14, count: 60 });
     candles[12].close = NaN;
-    candles[35].time += 180;
+    for (let i = 35; i < candles.length; i++) candles[i].time += 180;
     for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
       const params = paramsFor(kind);
       const engine = createIndicatorEngine(kind, candles, params, 'close');
