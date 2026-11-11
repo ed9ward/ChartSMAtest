@@ -57,12 +57,20 @@ async function mockCoinbase(page, respond, { daily, trades } = {}) {
     });
   });
   await page.route('https://api.exchange.coinbase.com/products/*/trades*', async (route) => {
-    tradeRequests.push(new URL(route.request().url()));
+    const url = new URL(route.request().url());
+    tradeRequests.push(url);
+    const before = url.searchParams.get('before');
+    const after = url.searchParams.get('after');
+    const limit = Number(url.searchParams.get('limit') || 1000);
+    const page = [...(trades ?? state.trades)]
+      .filter((trade) => before !== null ? trade.trade_id > Number(before)
+        : after !== null ? trade.trade_id < Number(after) : true)
+      .sort((a, b) => b.trade_id - a.trade_id).slice(0, limit);
     await route.fulfill({
       status: state.restStatus,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify([...(trades ?? state.trades)].sort((a, b) => b.trade_id - a.trade_id)),
+      body: JSON.stringify(page),
     });
   });
   await page.routeWebSocket(/ws-feed\.exchange\.coinbase\.com/, (ws) => {
