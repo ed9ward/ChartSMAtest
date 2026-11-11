@@ -10,7 +10,8 @@
     "test:ui": "playwright test",
     "test": "vitest run && playwright test",
     "mutate": "node scripts/mutation/run.mjs",
-    "mutate:check": "node scripts/mutation/run.mjs --check"
+    "mutate:check": "node scripts/mutation/run.mjs --check",
+    "check:syntax": "node scripts/check-syntax.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",
