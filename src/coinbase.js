@@ -7,6 +7,7 @@
 
 import { assertLimit } from './limit.js';
 import { parseFiniteNumber, parseBucketTimestamp } from './parse.js';
+import { withTimeout } from './request.js';
 
 export const COINBASE_GRANULARITY = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 export const COINBASE_REST = 'https://api.exchange.coinbase.com';
@@ -34,21 +35,23 @@ export async function fetchHistory({ symbol, interval, limit = MAX_CANDLES, sign
   const granularity = COINBASE_GRANULARITY[interval];
   if (!granularity) throw new Error(`Coinbase has no ${interval} timeframe`);
   const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/candles?granularity=${granularity}`;
-  const res = await fetchFn(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-  if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
-  const candles = [];
-  let invalidCount = 0;
-  for (const row of body) {
-    const candle = parseCandleRow(row, interval);
-    if (candle) candles.push(candle);
-    else invalidCount++;
-  }
-  candles.sort((a, b) => a.time - b.time);
-  const result = candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
-  if (invalidCount) result.invalidCount = invalidCount;
-  return result;
+  return withTimeout(async (requestSignal) => {
+    const res = await fetchFn(url, { signal: requestSignal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
+    const candles = [];
+    let invalidCount = 0;
+    for (const row of body) {
+      const candle = parseCandleRow(row, interval);
+      if (candle) candles.push(candle);
+      else invalidCount++;
+    }
+    candles.sort((a, b) => a.time - b.time);
+    const result = candles.slice(candles.length - Math.min(limit, MAX_CANDLES, candles.length));
+    if (invalidCount) result.invalidCount = invalidCount;
+    return result;
+  }, { signal });
 }
 
 // --- trades ----------------------------------------------------------------
@@ -121,41 +124,38 @@ export async function fetchTrades({
   }
   if (!Number.isSafeInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive safe integer');
 
-  const collected = new Map();
-  let cursor = null;
-  let pages = 0;
-  let oldestSeen = Infinity;
-
-  while (pages < (afterTradeId === null ? 1 : maxPages)) {
-    const params = new URLSearchParams({ limit: String(MAX_TRADES) });
-    if (afterTradeId !== null) params.set(cursor === null ? 'before' : 'after', String(cursor ?? afterTradeId));
-    const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?${params}`;
-    const res = await fetchFn(url, { signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
-    if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
-
-    const page = body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time)).filter(Boolean);
-    pages++;
-    for (const trade of page) {
-      if ((afterTradeId === null || trade.tradeId > afterTradeId) && trade.tradeId <= throughTradeId) {
-        collected.set(trade.tradeId, trade);
+  return withTimeout(async (requestSignal) => {
+    const collected = new Map();
+    let cursor = null;
+    const seenCursors = new Set();
+    let pages = 0;
+    let oldestSeen = Infinity;
+    while (pages < (afterTradeId === null ? 1 : maxPages)) {
+      const params = new URLSearchParams({ limit: String(MAX_TRADES) });
+      if (afterTradeId !== null) params.set(cursor === null ? 'before' : 'after', String(cursor ?? afterTradeId));
+      const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?${params}`;
+      const res = await fetchFn(url, { signal: requestSignal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
+      const page = body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time)).filter(Boolean);
+      pages++;
+      for (const trade of page) {
+        if ((afterTradeId === null || trade.tradeId > afterTradeId) && trade.tradeId <= throughTradeId) collected.set(trade.tradeId, trade);
+        oldestSeen = Math.min(oldestSeen, trade.tradeId);
       }
-      oldestSeen = Math.min(oldestSeen, trade.tradeId);
+      if (afterTradeId === null || page.length < MAX_TRADES || oldestSeen <= afterTradeId) break;
+      const nextCursor = res.headers?.get?.('CB-AFTER');
+      if (typeof nextCursor !== 'string' || !nextCursor.trim()) throw new Error('Coinbase trade pagination response is missing CB-AFTER');
+      if (seenCursors.has(nextCursor)) throw new Error('Coinbase trade pagination cursor repeated');
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
     }
-
-    if (afterTradeId === null || page.length < MAX_TRADES || oldestSeen <= afterTradeId) break;
-    const nextCursor = Math.min(...page.map((trade) => trade.tradeId));
-    if (!Number.isSafeInteger(nextCursor) || nextCursor >= cursor && cursor !== null) {
-      throw new Error('Coinbase trade pagination did not advance');
+    if (afterTradeId !== null && oldestSeen > afterTradeId && pages >= maxPages) {
+      throw new Error(`trade recovery exceeds ${maxPages * MAX_TRADES} REST records`);
     }
-    cursor = nextCursor;
-  }
-
-  if (afterTradeId !== null && oldestSeen > afterTradeId && pages >= maxPages) {
-    throw new Error(`trade recovery exceeds ${maxPages * MAX_TRADES} REST records`);
-  }
-  return [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
+    return [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
+  }, { signal });
 }
 
 /**
@@ -180,51 +180,45 @@ export async function fetchTradesForBucket({
   }
   if (!Number.isSafeInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive safe integer');
 
-  const collected = new Map([[lastTrade.tradeId, lastTrade]]);
-  let cursor = lastTrade.tradeId;
-  let boundaryReached = false;
-
-  for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
-    const params = new URLSearchParams({ limit: String(MAX_TRADES), after: String(cursor) });
-    const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?${params}`;
-    const res = await fetchFn(url, { signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
-    if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
-
-    const page = body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time));
-    if (page.some((trade) => trade === null)) throw new Error('invalid trade row during candle bootstrap');
-    if (page.length === 0) { boundaryReached = true; break; }
-
-    const ids = page.map((trade) => trade.tradeId);
-    const nextCursor = Math.min(...ids);
-    if (!Number.isSafeInteger(nextCursor) || nextCursor >= cursor) {
-      throw new Error('Coinbase candle bootstrap pagination did not advance');
+  return withTimeout(async (requestSignal) => {
+    const collected = new Map([[lastTrade.tradeId, lastTrade]]);
+    let cursor = String(lastTrade.tradeId);
+    let cursorFloor = lastTrade.tradeId;
+    const seenCursors = new Set();
+    let boundaryReached = false;
+    for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
+      const params = new URLSearchParams({ limit: String(MAX_TRADES), after: cursor });
+      const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?${params}`;
+      const res = await fetchFn(url, { signal: requestSignal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
+      const page = body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time));
+      if (page.some((trade) => trade === null)) throw new Error('invalid trade row during candle bootstrap');
+      if (page.length === 0) { boundaryReached = true; break; }
+      for (const trade of page) {
+        if (trade.tradeId >= cursorFloor) throw new Error('Coinbase candle bootstrap returned a non-older trade');
+        if (trade.time >= bucketStart) collected.set(trade.tradeId, trade);
+        else boundaryReached = true;
+      }
+      if (boundaryReached || body.length < MAX_TRADES) { boundaryReached = true; break; }
+      cursorFloor = Math.min(...page.map((trade) => trade.tradeId));
+      const nextCursor = res.headers?.get?.('CB-AFTER');
+      if (typeof nextCursor !== 'string' || !nextCursor.trim()) throw new Error('Coinbase candle bootstrap response is missing CB-AFTER');
+      if (seenCursors.has(nextCursor)) throw new Error('Coinbase candle bootstrap cursor repeated');
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
     }
-    for (const trade of page) {
-      if (trade.tradeId >= cursor) throw new Error('Coinbase candle bootstrap returned a non-older trade');
-      if (trade.time >= bucketStart) collected.set(trade.tradeId, trade);
-      else boundaryReached = true;
+    if (!boundaryReached) throw new Error(`current candle exceeds ${maxPages * MAX_TRADES} REST records`);
+    const trades = [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
+    for (let i = 1; i < trades.length; i++) {
+      if (trades[i].tradeId !== trades[i - 1].tradeId + 1) throw new Error(`trade gap during candle bootstrap at ID ${trades[i - 1].tradeId + 1}`);
     }
-    if (boundaryReached || body.length < MAX_TRADES) {
-      boundaryReached = true;
-      break;
+    if (trades.some((trade) => trade.time < bucketStart || Math.floor(trade.time / intervalSeconds) * intervalSeconds !== bucketStart)) {
+      throw new Error('Coinbase candle bootstrap crossed a bucket boundary');
     }
-    cursor = nextCursor;
-  }
-
-  if (!boundaryReached) throw new Error(`current candle exceeds ${maxPages * MAX_TRADES} REST records`);
-  const trades = [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
-  for (let i = 1; i < trades.length; i++) {
-    if (trades[i].tradeId !== trades[i - 1].tradeId + 1) {
-      throw new Error(`trade gap during candle bootstrap at ID ${trades[i - 1].tradeId + 1}`);
-    }
-  }
-  if (trades.some((trade) => trade.time < bucketStart
-    || Math.floor(trade.time / intervalSeconds) * intervalSeconds !== bucketStart)) {
-    throw new Error('Coinbase candle bootstrap crossed a bucket boundary');
-  }
-  return trades;
+    return trades;
+  }, { signal });
 }
 
 const candleFromTrades = (trades, bucketStart) => ({
@@ -260,12 +254,21 @@ const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k
 export function openStream({
   symbol, interval, onKline, onClose, onError, onEvent, onResync, onActivity, seed,
   WS = WebSocket, fetchFn = fetch, graceMs = 300, reconcileDelayMs = 2000,
-  reconcileAttempts = 3, reconcileRetryMs = 1000, applyLastMatchWhenUnseeded = true, bootstrapBucket = false,
+  reconcileAttempts = 3, reconcileRetryMs = 1000, applyLastMatchWhenUnseeded = true, bootstrapBucket = false, signal: parentSignal,
 }) {
   const granularity = COINBASE_GRANULARITY[interval];
   const ws = new WS(COINBASE_WS);
   let closedByUs = false;
   const abortController = new AbortController();
+  const abortFromParent = () => abortController.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) abortFromParent();
+  else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  let closeNotified = false;
+  const notifyClose = () => {
+    if (closedByUs || closeNotified) return;
+    closeNotified = true;
+    onClose?.();
+  };
   let current = seed ? { ...seed } : null;
   let lastId = null;          // newest trade applied to the candle
   let bootstrapping = false;
@@ -464,10 +467,14 @@ export function openStream({
     if (beat) heartbeat(beat);
   };
 
-  ws.onclose = () => { if (!closedByUs) onClose?.(); };
+  ws.onclose = notifyClose;
+  ws.onerror = () => {
+    try { ws.close(); } finally { notifyClose(); }
+  };
   return {
     close() {
       closedByUs = true;
+      parentSignal?.removeEventListener('abort', abortFromParent);
       abortController.abort();
       for (const timer of timers) clearTimeout(timer);
       timers.clear();

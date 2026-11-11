@@ -5,7 +5,7 @@ import { PROVIDERS } from '../../src/providers.js';
 import { validateCandle } from '../../src/sanitize.js';
 import { mulberry32 } from '../../src/generator.js';
 
-const ok = (body) => ({ ok: true, status: 200, json: async () => body });
+const ok = (body, headers = {}) => ({ ok: true, status: 200, headers: { get: (name) => headers[name.toLowerCase()] ?? null }, json: async () => body });
 // [time, low, high, open, close, volume], newest first, like the real API
 const ROWS = [[1200, 9, 12, 10, 11, 5], [1140, 8, 11, 9, 10, 4], [1080, 7, 10, 8, 9, 3]];
 
@@ -151,7 +151,7 @@ describe('fetchTrades', () => {
     expect(trades.map((t) => t.tradeId)).toEqual([11, 12]);
     expect(trades[0]).toMatchObject({ price: 100, size: 1 });
   });
-  it('paginates a recovery range larger than one page without response headers', async () => {
+  it('paginates a recovery range larger than one page using Coinbase response cursors', async () => {
     const all = Array.from({ length: 1011 }, (_, i) => ({
       trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
     }));
@@ -166,7 +166,7 @@ describe('fetchTrades', () => {
         const page = all.filter((t) => before !== null ? t.trade_id > Number(before)
           : after !== null ? t.trade_id < Number(after) : true)
           .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
-        return ok(page);
+        return ok(page, { 'cb-after': String(Math.min(...page.map((trade) => trade.trade_id))) });
       },
     });
     expect(urls).toHaveLength(2);
@@ -175,6 +175,15 @@ describe('fetchTrades', () => {
     expect(trades).toHaveLength(1001);
     expect(trades[0].tradeId).toBe(11);
     expect(trades.at(-1).tradeId).toBe(1011);
+  });
+  it('fails closed when Coinbase omits CB-AFTER for a full page', async () => {
+    const page = Array.from({ length: MAX_TRADES }, (_, i) => ({
+      trade_id: 2000 - i, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    await expect(fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 1, throughTradeId: 2000,
+      fetchFn: async () => ok(page),
+    })).rejects.toThrow('missing CB-AFTER');
   });
   it('stops at the requested upper trade ID even if the page contains newer trades', async () => {
     const all = Array.from({ length: 20 }, (_, i) => ({
@@ -197,8 +206,9 @@ describe('fetchTrades', () => {
       fetchFn: async (url) => {
         urls.push(url);
         const cursor = Number(new URL(url).searchParams.get('after'));
-        return ok(older.filter((trade) => trade.trade_id < cursor)
-          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES));
+        const page = older.filter((trade) => trade.trade_id < cursor)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
+        return ok(page, { 'cb-after': String(Math.min(...page.map((trade) => trade.trade_id))) });
       },
     });
     expect(urls).toHaveLength(2);
@@ -233,7 +243,7 @@ describe('fetchTrades', () => {
         const page = all.filter((t) => before !== null ? t.trade_id > Number(before)
           : after !== null ? t.trade_id < Number(after) : true)
           .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
-        return ok(page);
+        return ok(page, { 'cb-after': String(Math.min(...page.map((trade) => trade.trade_id))) });
       },
     })).rejects.toThrow('trade recovery exceeds 2000 REST records');
   });
@@ -280,7 +290,7 @@ function setup({ trades = [], candles = [], ...opts } = {}) {
       const page = out.trades.filter((trade) => before !== null ? trade.trade_id > Number(before)
         : after !== null ? trade.trade_id < Number(after) : true)
         .sort((a, b) => b.trade_id - a.trade_id).slice(0, limit);
-      return ok(page);
+      return ok(page, { 'cb-after': String(Math.min(...page.map((trade) => trade.trade_id))) });
     }
     return ok(out.restCandles);
   };

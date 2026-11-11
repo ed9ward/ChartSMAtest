@@ -2,6 +2,7 @@
 
 import { assertLimit } from './limit.js';
 import { parseFiniteNumber, parseBucketTimestamp } from './parse.js';
+import { withTimeout } from './request.js';
 
 export const INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 export const KLINES_URL = 'https://api.binance.com/api/v3/klines';
@@ -44,32 +45,43 @@ export async function fetchHistory({ symbol, interval, limit = 500, signal, fetc
   assertLimit(limit);
   if (limit === 0) return [];
   const url = `${KLINES_URL}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${Math.min(limit, MAX_KLINES)}`;
-  const res = await fetchFn(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-  if (!Array.isArray(body)) throw new Error(body?.msg || 'unexpected response');
-  const candles = [];
-  let invalidCount = 0;
-  for (const row of body) {
-    const candle = parseKline(row, interval);
-    if (candle) candles.push(candle);
-    else invalidCount++;
-  }
-  if (invalidCount) candles.invalidCount = invalidCount;
-  candles.sort((a, b) => a.time - b.time);
-  return candles;
+  return withTimeout(async (requestSignal) => {
+    const res = await fetchFn(url, { signal: requestSignal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    if (!Array.isArray(body)) throw new Error(body?.msg || 'unexpected response');
+    const candles = [];
+    let invalidCount = 0;
+    for (const row of body) {
+      const candle = parseKline(row, interval);
+      if (candle) candles.push(candle);
+      else invalidCount++;
+    }
+    if (invalidCount) candles.invalidCount = invalidCount;
+    candles.sort((a, b) => a.time - b.time);
+    return candles;
+  }, { signal });
 }
 
 /** Opens the kline stream. onClose fires only when the connection ends without close() being called. */
 export function openStream({ symbol, interval, onKline, onClose, onActivity, WS = WebSocket }) {
   const ws = new WS(`${WS_URL}/${symbol.toLowerCase()}@kline_${interval}`);
   let closedByUs = false;
+  let closeNotified = false;
+  const notifyClose = () => {
+    if (closedByUs || closeNotified) return;
+    closeNotified = true;
+    onClose?.();
+  };
   ws.onmessage = (event) => {
     onActivity?.(); // any message at all shows that the connection is alive
     const parsed = parseKlineMessage(event.data, { symbol, interval });
     if (parsed) onKline(parsed);
   };
-  ws.onclose = () => { if (!closedByUs) onClose?.(); };
+  ws.onclose = notifyClose;
+  ws.onerror = () => {
+    try { ws.close(); } finally { notifyClose(); }
+  };
   return { close() { closedByUs = true; ws.close(); } };
 }
 

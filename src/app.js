@@ -38,7 +38,7 @@ const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const RETRY_BASE_MS = 1000;   // first attempt after a second, then 2, 4, 8, 16, 30, 30, ...
 const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 10_000;     // a connection that lived this long counts as healthy: the next loss starts again at one second
-const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, boundaryReconcilePending: false, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, boundaryReconcilePending: false, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null, requestController: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 
@@ -328,7 +328,7 @@ function resetRetry() {
 
 // The connection is lost (closed by the server, or silent): try again with a growing pause. The chart stays as it is meanwhile.
 function scheduleRetry(reason) {
-  if (live.manualOff) return;
+  if (live.manualOff || live.retry) return;
   cancelRetry();
   const attempt = ++live.attempt;
   const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
@@ -357,15 +357,17 @@ setInterval(watchConnection, 1000);
 function closeLive() {
   live.gen++; // any answer still in flight is now stale
   cancelRetry();
+  live.requestController?.abort();
+  live.requestController = null;
   live.conn?.close();
   Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, boundaryReconcilePending: false, resyncs: 0, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
-async function loadDay(gen, provider, symbol, interval) {
+async function loadDay(gen, provider, symbol, interval, signal) {
   let close = null;
   try {
-    const days = interval === '1d' ? [] : await provider.fetchHistory({ symbol, interval: '1d', limit: 2 });
+    const days = interval === '1d' ? [] : await provider.fetchHistory({ symbol, interval: '1d', limit: 2, signal });
     close = days.length === 2 ? days[0].close : null;
   } catch { /* the figure stays empty */ }
   if (gen !== live.gen) return;
@@ -379,23 +381,25 @@ async function loadLive({ auto = false } = {}) {
   const provider = PROVIDERS[state.scenario];
   const symbol = el.symbol.value;
   const interval = el.interval.value;
+  const requestController = new AbortController();
+  live.requestController = requestController;
   setStatus(`Loading ${symbol} ${interval}…`);
   live.loading = true; // Disconnect must work now too, not only once the connection is open
   try {
-    const history = await provider.fetchHistory({ symbol, interval, limit: provider.historyBars });
+    const history = await provider.fetchHistory({ symbol, interval, limit: provider.historyBars, signal: requestController.signal });
     if (gen !== live.gen) return;
     live.loading = false;
     ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history, INTERVAL_SECONDS[interval], { allowSparse: provider.sparseHistory }));
     render();
     touch();
     Object.assign(live, { symbol, provider, lastActivity: Date.now(), connectedAt: Date.now() });
-    loadDay(gen, provider, symbol, interval);
+    loadDay(gen, provider, symbol, interval, requestController.signal);
     // The history request may finish just before a candle boundary. If the socket
     // subscribes after that boundary, its first message can be the next candle;
     // the previous candle's final WebSocket update was then missed.
     live.boundaryReconcilePending = provider === PROVIDERS.binance;
     live.conn = provider.openStream({
-      symbol, interval, seed: lastCandle(), bootstrapBucket: provider.bootstrapBucket,
+      symbol, interval, signal: requestController.signal, seed: lastCandle(), bootstrapBucket: provider.bootstrapBucket,
       onActivity: () => { if (gen === live.gen) live.lastActivity = Date.now(); },
       onKline: ({ candle, correction, closed }) => onLiveKline(gen, candle, interval, correction, closed),
       onEvent: ({ type, count }) => {
@@ -434,7 +438,7 @@ async function loadLive({ auto = false } = {}) {
 
 async function reconcileInitialBinanceBoundary(gen, previousTime, interval) {
   try {
-    const candles = await live.provider.fetchHistory({ symbol: live.symbol, interval, limit: 2 });
+    const candles = await live.provider.fetchHistory({ symbol: live.symbol, interval, limit: 2, signal: live.requestController?.signal });
     if (gen !== live.gen) return;
     const finalCandle = candles.find((item) => item.time === previousTime);
     const index = state.candles.findIndex((item) => item.time === previousTime);
