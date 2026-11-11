@@ -57,12 +57,20 @@ async function mockCoinbase(page, respond, { daily, trades } = {}) {
     });
   });
   await page.route('https://api.exchange.coinbase.com/products/*/trades*', async (route) => {
-    tradeRequests.push(new URL(route.request().url()));
+    const url = new URL(route.request().url());
+    tradeRequests.push(url);
+    const before = url.searchParams.get('before');
+    const after = url.searchParams.get('after');
+    const limit = Number(url.searchParams.get('limit') || 1000);
+    const page = [...(trades ?? state.trades)]
+      .filter((trade) => before !== null ? trade.trade_id > Number(before)
+        : after !== null ? trade.trade_id < Number(after) : true)
+      .sort((a, b) => b.trade_id - a.trade_id).slice(0, limit);
     await route.fulfill({
       status: state.restStatus,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify([...(trades ?? state.trades)].sort((a, b) => b.trade_id - a.trade_id)),
+      body: JSON.stringify(page),
     });
   });
   await page.routeWebSocket(/ws-feed\.exchange\.coinbase\.com/, (ws) => {
@@ -102,12 +110,29 @@ async function goLive(page, mock, n = 1) {
   await expect.poll(() => mock.sockets.length).toBe(n);
   await expect(page.getByTestId('status')).toHaveText(/^Live /);
   await expect.poll(() => mock.sockets[n - 1].received.length).toBeGreaterThan(0); // subscribed (the last_match is on its way)
+  if (!mock.state.noLastMatch) await expect.poll(() => mock.tradeRequests.length).toBeGreaterThan(0); // startup candle watermark is reconciled
 }
 
 const lineData = (page, key) => page.evaluate((k) => window.__app.lineData(k), key);
 const status = (page) => page.getByTestId('status');
 
 test.describe('Coinbase history', () => {
+  test('the forming candle is rebuilt from trades at startup instead of trusting an unwatermarked REST candle', async ({ page }) => {
+    const trades = [
+      { trade_id: 997, time: iso(T0 + 0.5), price: '73480', size: '0.2', side: 'buy' },
+      { trade_id: 998, time: iso(T0 + 0.6), price: '73510', size: '0.3', side: 'buy' },
+      { trade_id: 999, time: iso(T0 + 0.7), price: '73470', size: '0.4', side: 'buy' },
+    ];
+    const mock = await mockCoinbase(page, undefined, { trades });
+    await goLive(page, mock);
+    await expect.poll(async () => ohlc((await candleData(page)).at(-1))).toEqual({
+      time: T0, open: 73480, high: 73510, low: 73470, close: 73488,
+    });
+    expect(await page.evaluate(() => window.__app.rawCandleData().at(-1).volume)).toBeCloseTo(1, 10);
+    expect(mock.tradeRequests).toHaveLength(1);
+    expect(mock.tradeRequests[0].search).toBe('?limit=1000&after=1000');
+  });
+
   test('BTC-USD is the default; bars come oldest first; SMA/EMA/BB/RSI match the golden values', async ({ page }) => {
     const mock = await mockCoinbase(page);
     await goLive(page, mock);
@@ -137,7 +162,7 @@ test.describe('Coinbase history', () => {
       type: 'subscribe',
       channels: [{ name: 'matches', product_ids: ['BTC-USD'] }, { name: 'heartbeat', product_ids: ['BTC-USD'] }],
     }]);
-    expect(mock.tradeRequests).toHaveLength(0); // trades are only asked for when something was lost
+    expect(mock.tradeRequests).toHaveLength(1); // one startup bucket reconstruction; no loss-recovery request
   });
 
   test('the first message after subscribing (last_match) changes nothing on the chart', async ({ page }) => {
@@ -179,6 +204,14 @@ test.describe('Coinbase history is limited to 300 candles', () => {
     await page.getByTestId('indicator').selectOption('sma');
     await page.getByTestId('period').fill('200');
     await expect(page.getByTestId('settle-note')).toBeHidden();
+  });
+
+  test('clean empty intervals are normal for Coinbase and do not produce gap warnings', async ({ page }) => {
+    const sparse = CB_ROWS.filter((_, index) => index % 5 !== 0);
+    const mock = await mockCoinbase(page, () => ({ body: sparse }));
+    await goLive(page, mock);
+    expect(Number(await page.getByTestId('bar-count').textContent())).toBeGreaterThan(0);
+    await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
   test('asking for more than 300 is cut to 300, not an error', async ({ page }) => {
@@ -264,7 +297,7 @@ test.describe('Coinbase live trades', () => {
     await page.getByTestId('indicator').selectOption('rsi');
     expectSeriesClose(await lineData(page, 'rsi'), refRSI(bars, 14, 'close'));
     await expect(status(page)).toHaveText('Live BTC-USD 1m'); // an orderly feed leaves no traces
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
   });
 
   test('garbage, other products and bad numbers are ignored', async ({ page }) => {
@@ -331,8 +364,8 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.lose(T0 + 20, 73600, 3);        // a new high, lost on the way
     t.send(0, T0 + 30, 73495, 0.1);   // the next one reveals the hole
     await expect(status(page)).toHaveText('Live BTC-USD 1m; recovered 1 missed trade(s)');
-    expect(mock.tradeRequests).toHaveLength(1);
-    expect(mock.tradeRequests[0].search).toBe('?limit=1000');
+    expect(mock.tradeRequests).toHaveLength(2);
+    expect(mock.tradeRequests[1].search).toBe('?limit=1000&before=1001');
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0, open: 73484, high: 73600, low: 73482, close: 73495 });
     await page.getByTestId('source').selectOption('volume');
     await page.getByTestId('period').fill('1');
@@ -361,7 +394,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     await page.getByTestId('source').selectOption('volume');
     await page.getByTestId('period').fill('1');
     await expect(page.getByTestId('last-sma')).toHaveText((1.02338 + 2).toFixed(2));
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
   });
 
   test('swapped messages are put in order without asking REST', async ({ page }) => {
@@ -379,7 +412,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0, open: 73484, high: 73600, low: 73450, close: 73450 });
     expect(a.id).toBeLessThan(first.id);
     await page.waitForTimeout(600); // longer than the grace period for a late predecessor
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
@@ -391,9 +424,10 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.lose(T0 + 20, 73100, 5); // nothing arrives after it: only the heartbeat knows
     t.beat(0);
     await page.waitForTimeout(500);
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
     t.beat(0);
     await expect(status(page)).toHaveText('Live BTC-USD 1m; recovered 1 missed trade(s)');
+    expect(mock.tradeRequests).toHaveLength(2);
     expect(ohlc((await candleData(page)).at(-1))).toMatchObject({ low: 73100, close: 73100 });
   });
 
@@ -409,7 +443,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.beat(0);
     await expect(page.getByTestId('last-close')).toHaveText('73495.00');
     await page.waitForTimeout(400);
-    expect(mock.tradeRequests).toHaveLength(0);
+    expect(mock.tradeRequests).toHaveLength(1);
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
   });
 
@@ -466,7 +500,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.lose(T0 + 20, 73100, 1);
     t.send(0, T0 + 30, 73495, 1);
     await expect.poll(() => mock.sockets.length).toBe(2);
-    await expect(status(page)).toHaveText('Live BTC-USD 1m; resynced 1 time(s)');
+    await expect(status(page)).toHaveText('Live BTC-USD 1m; could not fully rebuild 1 startup candle(s); resynced 1 time(s)');
     expect(errors.filter((e) => !/Failed to load resource.*500/.test(e))).toEqual([]);
     errors.length = 0;
   });

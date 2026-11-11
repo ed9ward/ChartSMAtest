@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { COINBASE_GRANULARITY, MAX_CANDLES, parseCandleRow, fetchHistory, parseMatch, parseHeartbeat, fetchTrades, openStream } from '../../src/coinbase.js';
+import { COINBASE_GRANULARITY, MAX_CANDLES, MAX_TRADES, parseCandleRow, fetchHistory, parseMatch, parseHeartbeat, fetchTrades, fetchTradesForBucket, openStream } from '../../src/coinbase.js';
 import { INTERVAL_SECONDS } from '../../src/live.js';
 import { PROVIDERS } from '../../src/providers.js';
 import { validateCandle } from '../../src/sanitize.js';
@@ -113,8 +113,8 @@ describe('parseMatch', () => {
   it('ids, prices and sizes may be numbers or numeric strings', () => {
     expect(parseMatch(msg({ trade_id: '1001', price: 73068.94, size: 0.25 }), ctx)).toMatchObject({ tradeId: 1001, price: 73068.94, size: 0.25 });
   });
-  it('a size of zero is allowed, a negative one is not', () => {
-    expect(parseMatch(msg({ size: '0' }), ctx).size).toBe(0);
+  it('zero and negative trade sizes are rejected', () => {
+    expect(parseMatch(msg({ size: '0' }), ctx)).toBeNull();
     expect(parseMatch(msg({ size: '-1' }), ctx)).toBeNull();
   });
   it.each([
@@ -151,8 +151,82 @@ describe('fetchTrades', () => {
     expect(trades.map((t) => t.tradeId)).toEqual([11, 12]);
     expect(trades[0]).toMatchObject({ price: 100, size: 1 });
   });
+  it('paginates a recovery range larger than one page without response headers', async () => {
+    const all = Array.from({ length: 1011 }, (_, i) => ({
+      trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    const urls = [];
+    const trades = await fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 10, throughTradeId: 1011,
+      fetchFn: async (url) => {
+        urls.push(url);
+        const parsed = new URL(url);
+        const before = parsed.searchParams.get('before');
+        const after = parsed.searchParams.get('after');
+        const page = all.filter((t) => before !== null ? t.trade_id > Number(before)
+          : after !== null ? t.trade_id < Number(after) : true)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
+        return ok(page);
+      },
+    });
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain('before=10');
+    expect(urls[1]).toContain('after=12');
+    expect(trades).toHaveLength(1001);
+    expect(trades[0].tradeId).toBe(11);
+    expect(trades.at(-1).tradeId).toBe(1011);
+  });
+  it('stops at the requested upper trade ID even if the page contains newer trades', async () => {
+    const all = Array.from({ length: 20 }, (_, i) => ({
+      trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    const trades = await fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 10, throughTradeId: 12,
+      fetchFn: async () => ok(all.sort((a, b) => b.trade_id - a.trade_id)),
+    });
+    expect(trades.map((trade) => trade.tradeId)).toEqual([11, 12]);
+  });
+  it('reconstructs a busy current candle across multiple older-trade pages', async () => {
+    const lastTrade = { tradeId: 1002, price: 102, size: 1, time: BASE + 30 };
+    const older = Array.from({ length: 1001 }, (_, i) => ({
+      trade_id: i + 1, time: at(10), price: String(100 + i / 1000), size: '0.01',
+    }));
+    const urls = [];
+    const trades = await fetchTradesForBucket({
+      symbol: 'BTC-USD', lastTrade, bucketStart: BASE, intervalSeconds: 60,
+      fetchFn: async (url) => {
+        urls.push(url);
+        const cursor = Number(new URL(url).searchParams.get('after'));
+        return ok(older.filter((trade) => trade.trade_id < cursor)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES));
+      },
+    });
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain('after=1002');
+    expect(urls[1]).toContain('after=2');
+    expect(trades).toHaveLength(1002);
+    expect(trades[0].tradeId).toBe(1);
+    expect(trades.at(-1).tradeId).toBe(1002);
+  });
+  it('fails closed when the configured pagination bound is exhausted', async () => {
+    const all = Array.from({ length: 3000 }, (_, i) => ({
+      trade_id: i + 1, time: '2026-11-10T16:34:03Z', price: '101', size: '0.5',
+    }));
+    await expect(fetchTrades({
+      symbol: 'BTC-USD', afterTradeId: 1, throughTradeId: 3000, maxPages: 2,
+      fetchFn: async (url) => {
+        const parsed = new URL(url);
+        const before = parsed.searchParams.get('before');
+        const after = parsed.searchParams.get('after');
+        const page = all.filter((t) => before !== null ? t.trade_id > Number(before)
+          : after !== null ? t.trade_id < Number(after) : true)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES);
+        return ok(page);
+      },
+    })).rejects.toThrow('trade recovery exceeds 2000 REST records');
+  });
   it('drops broken rows; errors are reported', async () => {
-    expect(await fetchTrades({ symbol: 'X', fetchFn: async () => ok([rows[0], null, { trade_id: 'x' }, {}]) })).toHaveLength(1);
+    expect(await fetchTrades({ symbol: 'X', fetchFn: async () => ok([rows[0], null, { trade_id: 'x' }, {}, { ...rows[0], trade_id: 13, size: '0' }]) })).toHaveLength(1);
     await expect(fetchTrades({ symbol: 'X', fetchFn: async () => ({ ok: false, status: 503 }) })).rejects.toThrow('HTTP 503');
     await expect(fetchTrades({ symbol: 'X', fetchFn: async () => ok({ message: 'Rate limit' }) })).rejects.toThrow('Rate limit');
   });
@@ -179,7 +253,14 @@ function setup({ trades = [], candles = [], ...opts } = {}) {
     out.urls.push(url);
     if (opts.failRest) throw new TypeError('Failed to fetch');
     if (url.includes('/trades')) {
-      return ok([...out.trades].sort((a, b) => b.trade_id - a.trade_id));
+      const parsed = new URL(url);
+      const before = parsed.searchParams.get('before');
+      const after = parsed.searchParams.get('after');
+      const limit = Number(parsed.searchParams.get('limit') || MAX_TRADES);
+      const page = out.trades.filter((trade) => before !== null ? trade.trade_id > Number(before)
+        : after !== null ? trade.trade_id < Number(after) : true)
+        .sort((a, b) => b.trade_id - a.trade_id).slice(0, limit);
+      return ok(page);
     }
     return ok(out.restCandles);
   };
@@ -214,6 +295,68 @@ describe('stream: subscription and baseline', () => {
     expect(t.candles).toEqual([]);
     t.send(match(501, 10, 101, 2));
     expect(t.candles[0]).toEqual({ time: BASE, open: 90, high: 120, low: 80, close: 101, volume: 12 });
+  });
+  it('rebuilds the forming candle from all REST trades before the last_match watermark', async () => {
+    const seed = { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 };
+    const t = setup({
+      seed,
+      bootstrapBucket: true,
+      trades: [[2, 1, 98, 1], [3, 5, 95, 2], [4, 8, 105, 1]],
+    });
+    t.send(lastMatch(5, 10, 100, 1));
+    // A live match received while bootstrap is in flight is buffered, then applied once.
+    t.send(match(6, 12, 110, 2));
+    await flush();
+    expect(t.candles.at(-2)).toEqual({ time: BASE, open: 98, high: 105, low: 95, close: 100, volume: 5 });
+    expect(t.candles.at(-1)).toEqual({ time: BASE, open: 98, high: 110, low: 95, close: 110, volume: 7 });
+    expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000&after=5']);
+    expect(t.resyncs).toEqual([]);
+  });
+  it('does not paginate an entire daily candle during startup bootstrap', () => {
+    const day = Math.floor(BASE / 86400) * 86400;
+    const t = setup({
+      interval: '1d',
+      seed: { time: day, open: 90, high: 120, low: 80, close: 100, volume: 10 },
+      bootstrapBucket: true,
+    });
+    t.send(lastMatch(5, 5, 100));
+    expect(restUrls(t)).toEqual([]);
+    expect(t.candles).toEqual([]);
+  });
+  it('aborts startup bootstrap on close without emitting a fallback candle or event', async () => {
+    let requestSignal;
+    const t = setup({
+      seed: { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 },
+      bootstrapBucket: true,
+      fetchFn: async (_url, { signal } = {}) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    });
+    t.send(lastMatch(5, 10, 100));
+    t.send(match(6, 12, 110, 2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestSignal).toBeDefined();
+    t.conn.close();
+    await flush();
+    expect(requestSignal.aborted).toBe(true);
+    expect(t.candles).toEqual([]);
+    expect(t.events).toEqual([]);
+    expect(t.resyncs).toEqual([]);
+  });
+  it('keeps the REST seed if the only trade in the startup bucket is last_match', async () => {
+    const seed = { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 };
+    const t = setup({ seed, bootstrapBucket: true });
+    t.send(lastMatch(5, 10, 100, 1));
+    await flush();
+    expect(t.candles).toEqual([]);
+    expect(t.resyncs).toEqual([]);
   });
   it('applies last_match when there is no REST seed', () => {
     const t = setup({ applyLastMatchWhenUnseeded: true });
@@ -351,7 +494,7 @@ describe('stream: lost trades are fetched from REST', () => {
     t.send(match(4, 4, 102, 2)); // 3 was lost
     await flush();
     expect(t.candles.at(-1)).toEqual({ time: BASE, open: 100, high: 150, low: 100, close: 102, volume: 8 });
-    expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000']);
+    expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000&before=2']);
     expect(t.events).toContainEqual({ type: 'recovered', count: 1, upTo: 4 });
     expect(t.resyncs).toEqual([]);
   });
@@ -366,6 +509,19 @@ describe('stream: lost trades are fetched from REST', () => {
     expect(first).toEqual({ time: BASE, open: 100, high: 101, low: 95, close: 95, volume: 4 });
     expect(t.candles.at(-1)).toMatchObject({ time: BASE + 60, open: 120 });
     expect(t.candles.map((c) => c.time)).toEqual([BASE, BASE, BASE, BASE + 60]); // 1, 2, recovered 3, then 4: in order
+  });
+  it('recovers a gap spanning more than one REST page', async () => {
+    const trades = Array.from({ length: 1001 }, (_, i) => [i + 2, 2 + i / 1000, 100 + i / 1000, 0.01]);
+    const t = setup({ trades });
+    t.send(lastMatch(1));
+    t.send(match(1003, 4, 105, 1));
+    await flush();
+    expect(t.resyncs).toEqual([]);
+    expect(t.candles.at(-1).volume).toBeCloseTo(11.01, 8);
+    expect(t.events).toContainEqual({ type: 'recovered', count: 1001, upTo: 1003 });
+    expect(restUrls(t)).toHaveLength(2);
+    expect(restUrls(t)[0]).toContain('before=1');
+    expect(restUrls(t)[1]).toContain('after=3');
   });
   it('several lost trades in a row', async () => {
     const t = setup({ trades: [[2, 2, 101, 1], [3, 3, 102, 1], [4, 4, 103, 1]] });
@@ -535,6 +691,39 @@ describe('stream: when the missing trades cannot be fetched', () => {
     expect(t.resyncs).toEqual([]);
     expect(t.ws.closed).toBe(true);
   });
+
+  it('aborts an in-flight REST recovery when the stream is closed', async () => {
+    let requestSignal;
+    const t = setup({
+      fetchFn: async (_url, { signal } = {}) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          if (signal?.aborted) {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+            return;
+          }
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    });
+    t.send(lastMatch(0));
+    t.send(match(1, 1, 100, 1));
+    t.send(match(3, 3, 102, 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestSignal).toBeDefined();
+    expect(requestSignal.aborted).toBe(false);
+    t.conn.close();
+    await flush();
+    expect(requestSignal.aborted).toBe(true);
+    expect(t.resyncs).toEqual([]);
+    expect(t.ws.closed).toBe(true);
+  });
 });
 
 describe('stream: the exchange corrects a closed candle', () => {
@@ -609,6 +798,32 @@ describe('stream: the exchange corrects a closed candle', () => {
     expect(attempts).toBe(2);
     expect(t.events).toContainEqual(expect.objectContaining({ type: 'reconcile-failed', attempts: 2, reason: 'REST unavailable' }));
     expect(t.resyncs).toEqual([]);
+  });
+  it('aborts an in-flight candle reconciliation when the stream is closed', async () => {
+    let requestSignal;
+    const t = setup({
+      reconcileDelayMs: 0,
+      fetchFn: async (_url, { signal } = {}) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    });
+    t.send(lastMatch(0));
+    t.send(match(1, 10, 100, 1));
+    t.send(match(2, 61, 110, 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestSignal).toBeDefined();
+    t.conn.close();
+    await flush();
+    expect(requestSignal.aborted).toBe(true);
+    expect(t.events).toEqual([]);
+    expect(t.corrections).toEqual([]);
   });
   it('is off when reconcileDelayMs is null', async () => {
     const t = setup({ reconcileDelayMs: null, candles: [[BASE, 1, 2, 1, 2, 9]] });

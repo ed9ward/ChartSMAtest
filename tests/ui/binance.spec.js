@@ -285,6 +285,24 @@ test.describe('connection problems', () => {
     expect(mock.requests).toHaveLength(2); // the history was taken again, so nothing that happened meanwhile is missing
   });
 
+  test('Binance connection is rotated before the 24-hour server limit', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
+    const mock = await mockBinance(page);
+    await goLive(page, mock);
+
+    // 23 h 50 min plus one watchdog tick: rotate with margin before Binance's 24 h limit.
+    await page.clock.fastForward(23 * 60 * 60 * 1000 + 50 * 60 * 1000 + 1000);
+    await expect(page.getByTestId('status')).toHaveText(
+      'Feed disconnected: scheduled connection refresh; reconnecting in 1 s (attempt 1)',
+    );
+    await expect.poll(() => mock.sockets[0].closed).toBe(true);
+
+    await page.clock.fastForward(1000);
+    await expect.poll(() => mock.sockets.length).toBe(2);
+    await expect(page.getByTestId('status')).toHaveText('Live BTCUSDT 1m');
+    expect(mock.requests).toHaveLength(2); // REST history is refreshed during the handover
+  });
+
   test('settings changed while disconnected apply to the data', async ({ page }) => {
     const mock = await mockBinance(page);
     await goLive(page, mock);

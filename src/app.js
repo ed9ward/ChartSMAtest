@@ -1,5 +1,6 @@
 import { SOURCES } from './sma.js';
-import { INDICATORS, computeIndicator, validateParams, settleBars, minBars } from './indicators.js';
+import { INDICATORS, validateParams, settleBars, minBars } from './indicators.js';
+import { createIndicatorEngine } from './indicator-engine.js';
 import { sanitizeCandles, validateCandle, appendBoundedCandle } from './sanitize.js';
 import { SCENARIOS } from './scenarios.js';
 import { createFeed } from './feed.js';
@@ -32,12 +33,12 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
 });
 
-const state = { decimals: { price: 2, lines: {} }, candles: [], indicator: 'sma', source: 'close', period: 20, mult: 2, start: 'first', scenario: 'normal', issues: [], updatedAt: null };
+const state = { decimals: { price: 2, lines: {} }, candles: [], indicatorEngine: null, indicator: 'sma', source: 'close', period: 20, mult: 2, start: 'first', scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const RETRY_BASE_MS = 1000;   // first attempt after a second, then 2, 4, 8, 16, 30, 30, ...
 const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 10_000;     // a connection that lived this long counts as healthy: the next loss starts again at one second
-const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, closedThrough: null, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
+const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null }; // gen invalidates answers of superseded requests
 let lines = []; // [{ key, def, series }] of the selected indicator
 
 
@@ -49,7 +50,6 @@ function params() {
   const period = BUG === 'offbyone' ? Math.max(1, state.period - 1) : state.period;
   return { period, mult: state.mult, start: state.start };
 }
-const points = () => computeIndicator(state.indicator, state.candles, params(), state.source);
 
 function setStatus(text, isError = false) {
   el.status.textContent = text;
@@ -71,6 +71,7 @@ function showStatus() {
     live.recovered && `recovered ${live.recovered} missed trade(s)`,
     live.corrected && `corrected ${live.corrected} candle(s) from the exchange`,
     live.reconcileFailures && `could not verify ${live.reconcileFailures} closed candle(s)`,
+    live.bootstrapFailures && `could not fully rebuild ${live.bootstrapFailures} startup candle(s)`,
     live.resyncs && `resynced ${live.resyncs} time(s)`,
   ];
   const text = [base, ...state.issues, ...notes].filter(Boolean).join('; ');
@@ -160,7 +161,8 @@ function applyPrecision(pts) {
 // fit: show all bars (new data); false keeps the range the user zoomed to (a changed setting).
 function render({ fit = true } = {}) {
   candleSeries.setData(state.candles);
-  const pts = points();
+  state.indicatorEngine = createIndicatorEngine(state.indicator, state.candles, params(), state.source);
+  const pts = state.indicatorEngine.data();
   for (const l of lines) l.series.setData(pts[l.key]);
   applyPrecision(pts);
   if (fit) chart.timeScale().fitContent();
@@ -172,10 +174,10 @@ function paintLast(candle, fullRedraw = false) {
   touch();
   if (fullRedraw) { render({ fit: false }); return; }
   candleSeries.update(candle);
-  const pts = points();
+  const latest = state.indicatorEngine.upsert(candle);
   for (const l of lines) {
-    const last = pts[l.key].at(-1);
-    if (last?.time === candle.time) l.series.update(last);
+    const point = latest[l.key];
+    if (point) l.series.update(point);
   }
   updateLegend();
 }
@@ -339,9 +341,16 @@ function scheduleRetry(reason) {
 // Once a second: is the connection alive, and has it been alive long enough to count as healthy?
 function watchConnection() {
   if (!live.conn || !live.provider) return;
-  const silent = Date.now() - live.lastActivity;
+  const now = Date.now();
+  const age = now - live.connectedAt;
+  // Binance expires a WebSocket connection after 24 hours. Rotate proactively
+  // and reload REST history so the handover cannot leave a silent data gap.
+  if (live.provider.maxConnectionMs && age >= live.provider.maxConnectionMs) {
+    return scheduleRetry('scheduled connection refresh');
+  }
+  const silent = now - live.lastActivity;
   if (silent > live.provider.staleMs) return scheduleRetry(`no data for ${Math.round(silent / 1000)} s`);
-  if (live.attempt > 0 && Date.now() - live.connectedAt > STABLE_MS) live.attempt = 0;
+  if (live.attempt > 0 && age > STABLE_MS) live.attempt = 0;
 }
 setInterval(watchConnection, 1000);
 
@@ -349,7 +358,7 @@ function closeLive() {
   live.gen++; // any answer still in flight is now stale
   cancelRetry();
   live.conn?.close();
-  Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, closedThrough: null, resyncs: 0, prevClose: null, dayIndex: null });
+  Object.assign(live, { loading: false, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, resyncs: 0, prevClose: null, dayIndex: null });
 }
 
 // Previous day's close for the change-per-day figure. A failure only hides that figure, the chart keeps working.
@@ -376,13 +385,13 @@ async function loadLive({ auto = false } = {}) {
     const history = await provider.fetchHistory({ symbol, interval, limit: provider.historyBars });
     if (gen !== live.gen) return;
     live.loading = false;
-    ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history, INTERVAL_SECONDS[interval]));
+    ({ candles: state.candles, issues: state.issues } = sanitizeCandles(history, INTERVAL_SECONDS[interval], { allowSparse: provider.sparseHistory }));
     render();
     touch();
     Object.assign(live, { symbol, provider, lastActivity: Date.now(), connectedAt: Date.now() });
     loadDay(gen, provider, symbol, interval);
     live.conn = provider.openStream({
-      symbol, interval, seed: lastCandle(),
+      symbol, interval, seed: lastCandle(), bootstrapBucket: provider.bootstrapBucket,
       onActivity: () => { if (gen === live.gen) live.lastActivity = Date.now(); },
       onKline: ({ candle, correction, closed }) => onLiveKline(gen, candle, interval, correction, closed),
       onEvent: ({ type, count }) => {
@@ -390,6 +399,7 @@ async function loadLive({ auto = false } = {}) {
         if (type === 'recovered') live.recovered += count;
         if (type === 'duplicate') live.duplicates++;
         if (type === 'reconcile-failed') live.reconcileFailures++;
+        if (type === 'bootstrap-failed') live.bootstrapFailures++;
         showStatus();
       },
       // missed trades could not be fetched: take everything again, and say so
@@ -507,6 +517,7 @@ window.__app = {
   get smaSeries() { return primaryLine().series; }, // the main line of the selected indicator
   lineSeries: () => Object.fromEntries(lines.map((l) => [l.key, l.series])),
   candleData: () => candleSeries.data(),
+  rawCandleData: () => state.candles,
   smaData: () => primaryLine().series.data(),
   lineData: (key) => lines.find((l) => l.key === key)?.series.data() ?? [],
   probeLine,

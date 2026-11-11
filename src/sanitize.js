@@ -21,7 +21,7 @@ export function validateCandle(c) {
   return null;
 }
 
-export function sanitizeCandles(raw, intervalSeconds = null) {
+export function sanitizeCandles(raw, intervalSeconds = null, { allowSparse = false } = {}) {
   if (intervalSeconds !== null && (!Number.isSafeInteger(intervalSeconds) || intervalSeconds <= 0)) {
     throw new RangeError(`intervalSeconds must be a positive safe integer, got ${intervalSeconds}`);
   }
@@ -29,6 +29,7 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
   if (!Array.isArray(raw)) return { candles: [], issues: ['input is not an array'] };
 
   const byTime = new Map();
+  const droppedBuckets = new Set();
   const dropped = { invalid: Number.isSafeInteger(raw.invalidCount) && raw.invalidCount > 0 ? raw.invalidCount : 0, range: 0, inconsistent: 0 };
   let duplicates = 0;
   let unordered = false;
@@ -38,6 +39,9 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
     const problem = validateCandle(c);
     if (problem) {
       dropped[problem]++;
+      if (intervalSeconds !== null && Number.isSafeInteger(c?.time) && c.time >= 0 && c.time % intervalSeconds === 0) {
+        droppedBuckets.add(c.time);
+      }
       continue;
     }
     // A candle that is not on the selected timeframe's bucket boundary cannot be
@@ -58,11 +62,21 @@ export function sanitizeCandles(raw, intervalSeconds = null) {
   if (dropped.inconsistent) issues.push(`dropped ${dropped.inconsistent} inconsistent candle(s) (impossible high/low or negative volume)`);
   if (duplicates) issues.push(`merged ${duplicates} duplicate timestamp(s)`);
   if (unordered) issues.push('sorted unordered data');
+  // Coinbase intentionally omits buckets with no trades. For sparse sources, only
+  // report a missing interval when a rejected row identifies that exact bucket.
+  // For dense sources, every absent bucket remains a gap regardless of malformed rows.
   if (intervalSeconds !== null && candles.length > 1) {
     let missing = 0;
     for (let i = 1; i < candles.length; i++) {
-      const steps = (candles[i].time - candles[i - 1].time) / intervalSeconds;
-      if (Number.isSafeInteger(steps) && steps > 1) missing += steps - 1;
+      const previous = candles[i - 1].time;
+      const next = candles[i].time;
+      const steps = (next - previous) / intervalSeconds;
+      if (!Number.isSafeInteger(steps) || steps <= 1) continue;
+      if (allowSparse) {
+        for (const time of droppedBuckets) if (time > previous && time < next) missing++;
+      } else {
+        missing += steps - 1;
+      }
     }
     if (missing) issues.push(`source omitted ${missing} candle interval(s); indicators use returned candles only`);
   }
