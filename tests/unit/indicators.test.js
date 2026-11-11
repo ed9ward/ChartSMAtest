@@ -407,6 +407,9 @@ describe('minBars: when does the first value appear', () => {
   it.each([0, -1, 1.5, NaN])('rejects the period %s', (period) => {
     expect(() => minBars('sma', period)).toThrow(RangeError);
   });
+  it('rejects an invalid EMA seed', () => {
+    expect(() => minBars('ema', 20, { start: 'unknown' })).toThrow(RangeError);
+  });
 });
 
 describe('speed', () => {
