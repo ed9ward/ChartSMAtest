@@ -108,6 +108,22 @@ const lineData = (page, key) => page.evaluate((k) => window.__app.lineData(k), k
 const status = (page) => page.getByTestId('status');
 
 test.describe('Coinbase history', () => {
+  test('the forming candle is rebuilt from trades at startup instead of trusting an unwatermarked REST candle', async ({ page }) => {
+    const trades = [
+      { trade_id: 997, time: iso(T0 + 0.5), price: '73480', size: '0.2', side: 'buy' },
+      { trade_id: 998, time: iso(T0 + 0.6), price: '73510', size: '0.3', side: 'buy' },
+      { trade_id: 999, time: iso(T0 + 0.7), price: '73470', size: '0.4', side: 'buy' },
+    ];
+    const mock = await mockCoinbase(page, undefined, { trades });
+    await goLive(page, mock);
+    await expect.poll(async () => ohlc((await candleData(page)).at(-1))).toEqual({
+      time: T0, open: 73480, high: 73510, low: 73470, close: 73488,
+    });
+    expect((await candleData(page)).at(-1).volume).toBeCloseTo(1, 10);
+    expect(mock.tradeRequests).toHaveLength(1);
+    expect(mock.tradeRequests[0].search).toBe('?limit=1000&after=1000');
+  });
+
   test('BTC-USD is the default; bars come oldest first; SMA/EMA/BB/RSI match the golden values', async ({ page }) => {
     const mock = await mockCoinbase(page);
     await goLive(page, mock);
