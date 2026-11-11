@@ -113,8 +113,8 @@ describe('parseMatch', () => {
   it('ids, prices and sizes may be numbers or numeric strings', () => {
     expect(parseMatch(msg({ trade_id: '1001', price: 73068.94, size: 0.25 }), ctx)).toMatchObject({ tradeId: 1001, price: 73068.94, size: 0.25 });
   });
-  it('a size of zero is allowed, a negative one is not', () => {
-    expect(parseMatch(msg({ size: '0' }), ctx).size).toBe(0);
+  it('zero and negative trade sizes are rejected', () => {
+    expect(parseMatch(msg({ size: '0' }), ctx)).toBeNull();
     expect(parseMatch(msg({ size: '-1' }), ctx)).toBeNull();
   });
   it.each([
@@ -204,7 +204,7 @@ describe('fetchTrades', () => {
     })).rejects.toThrow('trade recovery exceeds 2000 REST records');
   });
   it('drops broken rows; errors are reported', async () => {
-    expect(await fetchTrades({ symbol: 'X', fetchFn: async () => ok([rows[0], null, { trade_id: 'x' }, {}]) })).toHaveLength(1);
+    expect(await fetchTrades({ symbol: 'X', fetchFn: async () => ok([rows[0], null, { trade_id: 'x' }, {}, { ...rows[0], trade_id: 13, size: '0' }]) })).toHaveLength(1);
     await expect(fetchTrades({ symbol: 'X', fetchFn: async () => ({ ok: false, status: 503 }) })).rejects.toThrow('HTTP 503');
     await expect(fetchTrades({ symbol: 'X', fetchFn: async () => ok({ message: 'Rate limit' }) })).rejects.toThrow('Rate limit');
   });
