@@ -16,7 +16,7 @@ export const MUTANTS = [
   { id: 'sma-volume-as-close', file: 'src/sma.js', from: "    case 'volume':\n      return candle[source];", to: "      return candle[source];\n    case 'volume':\n      return candle.close;" },
   { id: 'sma-nan-accepted', file: 'src/sma.js', from: "typeof value === 'number' && Number.isFinite(value) ? value : null", to: "typeof value === 'number' ? value : 0" },
   { id: 'sma-overflow-accepted', file: 'src/sma.js', from: 'if (Number.isFinite(average)) out.push', to: 'out.push' },
-  { id: 'sma-period-not-validated', file: 'src/sma.js', from: 'if (!Number.isInteger(period) || period < 1) {', to: 'if (false) {' },
+  { id: 'sma-period-not-validated', file: 'src/sma.js', from: 'if (!Number.isSafeInteger(period) || period < 1) {', to: 'if (false) {' },
 
   // --- EMA, Bollinger, RSI ---------------------------------------------------
   { id: 'ema-alpha-wrong', file: 'src/indicators.js', from: '  const alpha = 2 / (period + 1);\n  const out = [];', to: '  const alpha = 2 / period;\n  const out = [];' },
