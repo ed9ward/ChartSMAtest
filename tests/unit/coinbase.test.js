@@ -748,6 +748,14 @@ describe('stream: the exchange corrects a closed candle', () => {
     await new Promise((r) => setTimeout(r, 40));
     expect(t.corrections).toEqual([]);
   });
+  it('reconciles fractional volume differences instead of treating them as zero', async () => {
+    const t = setup({ reconcileDelayMs: 5, candles: [[BASE, 100, 100, 100, 100, 0]] });
+    t.send(lastMatch(0));
+    t.send(match(1, 10, 100, 1e-10));
+    t.send(match(2, 61, 100, 1));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(t.corrections).toEqual([{ time: BASE, open: 100, high: 100, low: 100, close: 100, volume: 0 }]);
+  });
   it('the seed candle, which may have been incomplete, is checked when it closes', async () => {
     const t = setup({ reconcileDelayMs: 5, seed: { time: BASE, open: 100, high: 101, low: 99, close: 100, volume: 1 }, candles: [[BASE, 99, 150, 100, 140, 30]] });
     t.send(lastMatch(0));
