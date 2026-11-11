@@ -8,7 +8,7 @@ const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 /**
  * The one rule for "is this candle usable", used for history and for live updates alike.
  * Returns null when it is, otherwise why not:
- *   'invalid'      not numbers (NaN, null, strings, missing fields)
+ *   'invalid'      non-finite/non-numeric fields, or a timestamp that is not a non-negative safe integer
  *   'range'        an absurd price
  *   'inconsistent' impossible OHLC (high below open/close/low, low above open/close) or a negative volume
  * Negative prices are allowed (some instruments have them); the OHLC rules still apply to them.
