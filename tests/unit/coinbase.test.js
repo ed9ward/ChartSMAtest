@@ -312,6 +312,17 @@ describe('stream: subscription and baseline', () => {
     expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000&after=5']);
     expect(t.resyncs).toEqual([]);
   });
+  it('does not paginate an entire daily candle during startup bootstrap', () => {
+    const day = Math.floor(BASE / 86400) * 86400;
+    const t = setup({
+      interval: '1d',
+      seed: { time: day, open: 90, high: 120, low: 80, close: 100, volume: 10 },
+      bootstrapBucket: true,
+    });
+    t.send(lastMatch(5, 5, 100));
+    expect(restUrls(t)).toEqual([]);
+    expect(t.candles).toEqual([]);
+  });
   it('does not emit buffered startup matches after the stream closes during REST bootstrap', async () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
