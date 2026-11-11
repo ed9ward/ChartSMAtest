@@ -274,6 +274,30 @@ describe('stream: subscription and baseline', () => {
     t.send(match(501, 10, 101, 2));
     expect(t.candles[0]).toEqual({ time: BASE, open: 90, high: 120, low: 80, close: 101, volume: 12 });
   });
+  it('rebuilds the forming candle from all REST trades before the last_match watermark', async () => {
+    const seed = { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 };
+    const t = setup({
+      seed,
+      bootstrapBucket: true,
+      trades: [[2, 1, 98, 1], [3, 5, 95, 2], [4, 8, 105, 1]],
+    });
+    t.send(lastMatch(5, 10, 100, 1));
+    // A live match received while bootstrap is in flight is buffered, then applied once.
+    t.send(match(6, 12, 110, 2));
+    await flush();
+    expect(t.candles.at(-2)).toEqual({ time: BASE, open: 98, high: 105, low: 95, close: 100, volume: 5 });
+    expect(t.candles.at(-1)).toEqual({ time: BASE, open: 98, high: 110, low: 95, close: 110, volume: 7 });
+    expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000&after=5']);
+    expect(t.resyncs).toEqual([]);
+  });
+  it('keeps the REST seed if the only trade in the startup bucket is last_match', async () => {
+    const seed = { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 };
+    const t = setup({ seed, bootstrapBucket: true });
+    t.send(lastMatch(5, 10, 100, 1));
+    await flush();
+    expect(t.candles).toEqual([]);
+    expect(t.resyncs).toEqual([]);
+  });
   it('applies last_match when there is no REST seed', () => {
     const t = setup({ applyLastMatchWhenUnseeded: true });
     t.send(lastMatch(7, 5, 100));
