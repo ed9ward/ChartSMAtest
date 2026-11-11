@@ -44,7 +44,7 @@ export const MUTANTS = [
   { id: 'candle-order-not-sorted', file: 'src/sanitize.js', from: '.sort((a, b) => a.time - b.time)', to: '' },
   { id: 'candle-range-not-checked', file: 'src/sanitize.js', from: 'Math.abs(p) > MAX_ABS_PRICE', to: 'false' },
   { id: 'coinbase-sparse-gaps-overreported', file: 'src/sanitize.js', from: 'if (allowSparse) {', to: 'if (false) {' },
-  { id: 'limit-accepts-negatives', file: 'src/limit.js', from: 'if (!Number.isInteger(limit) || limit < 0)', to: 'if (!Number.isInteger(limit))' },
+  { id: 'limit-accepts-negatives', file: 'src/limit.js', from: 'if (!Number.isSafeInteger(limit) || limit < 0)', to: 'if (!Number.isSafeInteger(limit))' },
   { id: 'decimals-of-ordinary-prices', file: 'src/format.js', from: 'if (median >= 1) return 2;', to: 'if (median >= 1) return 4;' },
   { id: 'decimals-not-capped', file: 'src/format.js', from: 'Math.min(12, Math.max(2, Math.ceil(-Math.log10(median)) + 3))', to: 'Math.max(2, Math.ceil(-Math.log10(median)) + 3)' },
   { id: 'decimals-zeros-count', file: 'src/format.js', from: '.filter((v) => Number.isFinite(v) && v !== 0)', to: '.filter((v) => Number.isFinite(v))' },
