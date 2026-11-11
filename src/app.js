@@ -517,6 +517,7 @@ window.__app = {
   get smaSeries() { return primaryLine().series; }, // the main line of the selected indicator
   lineSeries: () => Object.fromEntries(lines.map((l) => [l.key, l.series])),
   candleData: () => candleSeries.data(),
+  rawCandleData: () => state.candles,
   smaData: () => primaryLine().series.data(),
   lineData: (key) => lines.find((l) => l.key === key)?.series.data() ?? [],
   probeLine,
