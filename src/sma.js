@@ -22,8 +22,8 @@ export function sourceValue(candle, source) {
 }
 
 export function assertPeriod(period) {
-  if (!Number.isInteger(period) || period < 1) {
-    throw new RangeError(`SMA period must be an integer >= 1, got ${period}`);
+  if (!Number.isSafeInteger(period) || period < 1) {
+    throw new RangeError(`SMA period must be a positive safe integer, got ${period}`);
   }
 }
 
