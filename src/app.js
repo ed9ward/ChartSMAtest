@@ -410,7 +410,7 @@ async function loadLive({ auto = false } = {}) {
       onResync: () => {
         if (gen !== live.gen) return;
         const resyncs = live.resyncs + 1;
-        loadLive();
+        loadLive({ auto: true });
         live.resyncs = resyncs;
       },
       onClose: () => { if (gen === live.gen) scheduleRetry(null); },
