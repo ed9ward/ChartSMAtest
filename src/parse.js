@@ -12,10 +12,12 @@ export function parseFiniteNumber(value) {
 
 /** Parse an exchange epoch timestamp and optionally require candle-bucket alignment. */
 export function parseBucketTimestamp(value, unitsPerSecond, intervalSeconds = null) {
+  if (!Number.isSafeInteger(unitsPerSecond) || unitsPerSecond <= 0) return null;
+  if (intervalSeconds !== null && (!Number.isSafeInteger(intervalSeconds) || intervalSeconds <= 0)) return null;
   const raw = parseFiniteNumber(value);
   if (raw === null || !Number.isSafeInteger(raw) || raw < 0) return null;
   if (raw % unitsPerSecond !== 0) return null;
   const seconds = raw / unitsPerSecond;
-  if (intervalSeconds !== null && (!Number.isInteger(intervalSeconds) || intervalSeconds <= 0 || seconds % intervalSeconds !== 0)) return null;
+  if (intervalSeconds !== null && seconds % intervalSeconds !== 0) return null;
   return seconds;
 }
