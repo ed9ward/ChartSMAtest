@@ -312,6 +312,21 @@ describe('stream: subscription and baseline', () => {
     expect(restUrls(t)).toEqual(['https://api.exchange.coinbase.com/products/BTC-USD/trades?limit=1000&after=5']);
     expect(t.resyncs).toEqual([]);
   });
+  it('does not emit buffered startup matches after the stream closes during REST bootstrap', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const t = setup({
+      seed: { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 },
+      bootstrapBucket: true,
+      fetchFn: async () => { await gate; return ok([]); },
+    });
+    t.send(lastMatch(5, 10, 100));
+    t.send(match(6, 12, 110, 2));
+    t.conn.close();
+    release();
+    await flush();
+    expect(t.candles).toEqual([]);
+  });
   it('keeps the REST seed if the only trade in the startup bucket is last_match', async () => {
     const seed = { time: BASE, open: 90, high: 120, low: 80, close: 100, volume: 10 };
     const t = setup({ seed, bootstrapBucket: true });
