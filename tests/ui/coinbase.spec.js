@@ -128,7 +128,7 @@ test.describe('Coinbase history', () => {
     await expect.poll(async () => ohlc((await candleData(page)).at(-1))).toEqual({
       time: T0, open: 73480, high: 73510, low: 73470, close: 73488,
     });
-    expect((await candleData(page)).at(-1).volume).toBeCloseTo(1, 10);
+    expect(await page.evaluate(() => window.__app.rawCandleData().at(-1).volume)).toBeCloseTo(1, 10);
     expect(mock.tradeRequests).toHaveLength(1);
     expect(mock.tradeRequests[0].search).toBe('?limit=1000&after=1000');
   });
@@ -500,7 +500,7 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.lose(T0 + 20, 73100, 1);
     t.send(0, T0 + 30, 73495, 1);
     await expect.poll(() => mock.sockets.length).toBe(2);
-    await expect(status(page)).toHaveText('Live BTC-USD 1m; resynced 1 time(s)');
+    await expect(status(page)).toHaveText('Live BTC-USD 1m; could not fully rebuild 1 startup candle(s); resynced 1 time(s)');
     expect(errors.filter((e) => !/Failed to load resource.*500/.test(e))).toEqual([]);
     errors.length = 0;
   });
