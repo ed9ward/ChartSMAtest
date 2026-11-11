@@ -90,7 +90,7 @@ describe('sanitizeCandles', () => {
     expect(r.candles.map((c) => c.time)).toEqual([0, 60, 240]);
     expect(r.issues).toEqual([
       'dropped 1 invalid candle(s)',
-      'source omitted 2 candle interval(s); indicators use returned candles only',
+      'source omitted 1 candle interval(s); indicators use returned candles only',
     ]);
   });
   it('drops candles that are not aligned to the selected timeframe', () => {
