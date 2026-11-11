@@ -93,7 +93,7 @@ describe('fetchHistory', () => {
       await run(5000, async (u) => { url = u; return okResponse([]); });
       expect(url).toMatch(/limit=1000$/);
     });
-    it.each([[-1], [NaN], [1.5], [Infinity], ['5'], [null], [{}]])('rejects %j before any request', async (limit) => {
+    it.each([[-1], [NaN], [1.5], [Infinity], ['5'], [null], [{}], [Number.MAX_SAFE_INTEGER + 1]])('rejects %j before any request', async (limit) => {
       let called = false;
       await expect(run(limit, async () => { called = true; return okResponse([]); })).rejects.toThrow(RangeError);
       expect(called).toBe(false);
