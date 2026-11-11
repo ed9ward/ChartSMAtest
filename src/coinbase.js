@@ -335,7 +335,7 @@ export function openStream({
 
   const apply = (trade) => {
     const bucket = Math.floor(trade.time / granularity) * granularity;
-    if (current && bucket < current.time) return; // belongs to a candle that is already closed
+    if (current && bucket < current.time) return true; // ignore closed-bucket data but advance the trade-ID watermark
     if (!current || bucket > current.time) {
       if (current && reconcileDelayMs !== null) reconcile({ ...current });
       current = { time: bucket, open: trade.price, high: trade.price, low: trade.price, close: trade.price, volume: trade.size };
