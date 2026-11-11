@@ -5,6 +5,7 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.js'],
     coverage: {
       provider: 'v8',
+      reportOnFailure: true,
       include: ['src/**/*.js'],
       reporter: ['text', 'lcov'],
       reportsDirectory: 'coverage',
