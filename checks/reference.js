@@ -49,8 +49,16 @@ export function refBB(candles, period, mult, source) {
   const out = { upper: [], basis: [], lower: [] };
   for (let end = period; end <= xs.length; end++) {
     const w = xs.slice(end - period, end);
-    const m = mean(w);
-    const sd = Math.sqrt(Math.max(0, mean(w.map((x) => x * x)) - m * m));
+    // Welford's method avoids the catastrophic cancellation in E[x^2] - E[x]^2
+    // when a large price has a comparatively small amount of movement.
+    let m = 0;
+    let sumSquaredDeviation = 0;
+    w.forEach((x, i) => {
+      const delta = x - m;
+      m += delta / (i + 1);
+      sumSquaredDeviation += delta * (x - m);
+    });
+    const sd = Math.sqrt(Math.max(0, sumSquaredDeviation / period));
     const time = candles[end - 1].time;
     out.upper.push({ time, value: m + mult * sd });
     out.basis.push({ time, value: m });
