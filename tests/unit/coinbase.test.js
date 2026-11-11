@@ -76,7 +76,7 @@ describe('fetchHistory', () => {
       expect(await run(301, async () => ok(many))).toHaveLength(300);
       expect(await run(300, async () => ok(many))).toHaveLength(300);
     });
-    it.each([[-1], [-10], [NaN], [1.5], [0.5], [Infinity], [-Infinity], ['5'], [null], [{}], [[]], [true]])('rejects %j before any request', async (limit) => {
+    it.each([[-1], [-10], [NaN], [1.5], [0.5], [Infinity], [-Infinity], ['5'], [null], [{}], [[]], [true], [Number.MAX_SAFE_INTEGER + 1]])('rejects %j before any request', async (limit) => {
       let called = false;
       await expect(run(limit, async () => { called = true; return ok(rows); })).rejects.toThrow(RangeError);
       expect(called).toBe(false);
