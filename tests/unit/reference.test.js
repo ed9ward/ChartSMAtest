@@ -49,5 +49,15 @@ describe('independent Bollinger reference', () => {
     expect(bands.lower[0].value).toBeLessThan(bands.basis[0].value);
     expect(actual.upper[0].value).toBeGreaterThan(actual.basis[0].value);
     expect(actual.lower[0].value).toBeLessThan(actual.basis[0].value);
+    // Comparing the band widths separately is essential: a relative tolerance on a 1e12 price
+    // could otherwise hide the complete loss of a variance around that price level.
+    compareSeries(
+      actual.upper.map((p, i) => ({ time: p.time, value: p.value - actual.basis[i].value })),
+      bands.upper.map((p, i) => ({ time: p.time, value: p.value - bands.basis[i].value })),
+    );
+    compareSeries(
+      actual.lower.map((p, i) => ({ time: p.time, value: p.value - actual.basis[i].value })),
+      bands.lower.map((p, i) => ({ time: p.time, value: p.value - bands.basis[i].value })),
+    );
   });
 });
