@@ -41,10 +41,19 @@ jobs:
         run: npx playwright install-deps chromium
 
       # Test data is never cached: the tests read the fixtures in the repo and the network is replaced by them.
-      - run: npm run test:unit
+      - name: Unit tests with V8 coverage
+        run: npx --yes c8@10.1.3 --all --include='src/**/*.js' --reporter=text --reporter=lcov -- npm run test:unit
       - run: npm run test:ui
         env:
           CI: 'true'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         if: failure()
