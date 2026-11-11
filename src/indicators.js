@@ -178,6 +178,10 @@ export const INDICATORS = {
 export function settleBars(kind, period, { start = 'first', tolerance = 1e-3 } = {}) {
   assertPeriod(period);
   if (kind !== 'ema' && kind !== 'rsi') return 0;
+  if (typeof tolerance !== 'number' || !Number.isFinite(tolerance) || tolerance <= 0 || tolerance >= 1) {
+    throw new RangeError(`tolerance must be a finite number between 0 and 1, got ${tolerance}`);
+  }
+  if (kind === 'ema') assertEmaStart(start);
   const alpha = kind === 'ema' ? 2 / (period + 1) : 1 / period;
   const fade = alpha >= 1 ? 0 : Math.ceil(Math.log(tolerance) / Math.log(1 - alpha)); // alpha 1: the start is forgotten at once
   const warmup = kind === 'rsi' ? period : start === 'sma' ? period - 1 : 0;
