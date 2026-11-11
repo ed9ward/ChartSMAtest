@@ -174,6 +174,14 @@ test.describe('live updates', () => {
       const t = T0 + 60000 * Math.floor(i / 4); // 4 ticks per bar
       // a consistent candle: high/low must enclose the open and the close
       const c = { time: t / 1000, open: 73488, high: Math.max(73488, price) + 5, low: Math.min(73488, price) - 5, close: price, volume: i };
+      if (expected.at(-1).time < c.time) {
+        // Binance sends the final update for the previous candle before the new one.
+        const previous = expected.at(-1);
+        mock.sockets[0].ws.send(klineMsg({
+          t: previous.time * 1000, o: previous.open, h: previous.high, l: previous.low,
+          c: previous.close, v: previous.volume, x: true,
+        }));
+      }
       if (expected.at(-1).time === c.time) expected[expected.length - 1] = c; else expected.push(c);
       mock.sockets[0].ws.send(klineMsg({ t, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume }));
     }
