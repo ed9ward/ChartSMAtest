@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SMA chart</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 16px; color: #222; background: #fff; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    label { display: flex; gap: 6px; align-items: center; }
+    [hidden] { display: none !important; }
+    #day-change.up { color: #2e7d32; } #day-change.down { color: #c62828; }
+    .axis-note { color: #666; font-size: 12px; margin: 2px 0; }
+    .note { color: #8a5a00; background: #fff6e0; border: 1px solid #f0d9a0; padding: 4px 8px; margin: 4px 0; font-size: 13px; }
+    input[type=number] { width: 70px; }
+    #chart { width: 900px; max-width: 100%; height: 500px; border: 1px solid #ddd; }
+    #legend span { margin-right: 16px; }
+    #status.error { color: #c62828; }
+  </style>
+</head>
+<body>
+  <div class="row"><a href="checks.html" data-testid="open-checks">Run self-checks →</a></div>
+  <div class="row">
+    <label>Indicator
+      <select id="indicator" data-testid="indicator">
+        <option value="sma">SMA</option><option value="ema">EMA</option>
+        <option value="bb">Bollinger Bands</option><option value="rsi">RSI</option>
+      </select>
+    </label>
+    <label>Source
+      <select id="source" data-testid="source">
+        <option>close</option><option>open</option><option>high</option><option>low</option>
+        <option>volume</option><option>hl2</option><option>hlc3</option><option>ohlc4</option>
+      </select>
+    </label>
+    <label>Period <input id="period" data-testid="period" type="number" min="1" max="2000" step="1" value="20"></label>
+    <label id="start-label" hidden>EMA start
+      <select id="ema-start" data-testid="ema-start">
+        <option value="first">First value (TradingView)</option>
+        <option value="sma">SMA of first N (TA-Lib)</option>
+      </select>
+    </label>
+    <label id="mult-label" hidden>Mult <input id="mult" data-testid="mult" type="number" step="0.5" value="2"></label>
+    <label>Data
+      <select id="scenario" data-testid="scenario">
+        <option>normal</option><option>long</option><option>negative</option><option>huge</option><option>overflow</option>
+        <option>nan</option><option>inconsistent</option><option>flat</option><option>stalled</option><option>tiny</option><option>duplicates</option><option>unordered</option><option>empty</option>
+        <option value="binance">Binance live</option>
+        <option value="coinbase">Coinbase live</option>
+      </select>
+    </label>
+    <label>Symbol
+      <select id="symbol" data-testid="symbol">
+        <option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>BNBUSDT</option>
+      </select>
+    </label>
+    <label>Timeframe
+      <select id="interval" data-testid="interval">
+        <option>1m</option><option>5m</option><option>15m</option><option>1h</option><option>1d</option>
+      </select>
+    </label>
+    <button id="start" data-testid="start">Start stream</button>
+    <button id="stop" data-testid="stop">Stop</button>
+    <button id="disconnect" data-testid="disconnect">Disconnect feed</button>
+    <button id="reconnect" data-testid="reconnect">Reconnect feed</button>
+  </div>
+  <div id="legend" class="row" data-testid="legend">
+    <span>Bars: <b id="bar-count" data-testid="bar-count">0</b></span>
+    <span>Close: <b id="last-close" data-testid="last-close">—</b></span>
+    <span id="legend-day" hidden>Day: <b id="day-change" data-testid="day-change">—</b></span>
+    <span>Updated: <b id="last-update" data-testid="last-update">—</b></span>
+    <span><span id="legend-label" data-testid="legend-label">SMA</span>: <b id="last-sma" data-testid="last-sma">—</b></span>
+    <span id="legend-bands" hidden>Upper: <b id="last-bb-upper" data-testid="last-bb-upper">—</b> Lower: <b id="last-bb-lower" data-testid="last-bb-lower">—</b></span>
+  </div>
+  <div id="status" data-testid="status" role="status">OK</div>
+  <div id="settle-note" data-testid="settle-note" class="note" hidden></div>
+  <div class="axis-note" data-testid="axis-note">Time axis: UTC (the update time above is your local time)</div>
+  <div id="chart" data-testid="chart"></div>
+
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
