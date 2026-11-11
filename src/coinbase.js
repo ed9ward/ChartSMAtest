@@ -236,7 +236,9 @@ const candleFromTrades = (trades, bucketStart) => ({
   volume: trades.reduce((sum, trade) => sum + trade.size, 0),
 });
 
-const sameNumber = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+// Keep a small absolute floor for floating-point accumulation, but scale the relative tolerance to the values.
+// A floor of 1 would hide real differences in fractional trade sizes and candle volume.
+const sameNumber = (a, b) => Math.abs(a - b) <= 1e-12 + 1e-9 * Math.max(Math.abs(a), Math.abs(b));
 const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k) => sameNumber(a[k], b[k]));
 
 /**
