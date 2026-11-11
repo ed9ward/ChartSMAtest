@@ -241,7 +241,7 @@ describe('RSI', () => {
 });
 
 describe('parameters and dispatch', () => {
-  it.each([0, -1, 1.5, NaN, Infinity])('period %s is rejected by every indicator', (period) => {
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('period %s is rejected by every indicator', (period) => {
     expect(() => computeEMA(candles, period)).toThrow(RangeError);
     expect(() => computeBB(candles, period, 2)).toThrow(RangeError);
     expect(() => computeRSI(candles, period)).toThrow(RangeError);
