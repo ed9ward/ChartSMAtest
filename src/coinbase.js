@@ -407,7 +407,7 @@ export function openStream({
     }
     if (lastId === null) { // the first message fixes where we are
       lastId = trade.tradeId;
-      if (trade.last && bootstrapBucket) {
+      if (trade.last && bootstrapBucket && interval !== '1d') {
         bootstrapping = true;
         finishBootstrap(trade);
         return;
