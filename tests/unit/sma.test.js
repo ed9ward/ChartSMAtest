@@ -42,7 +42,7 @@ describe('period edge cases', () => {
   it('first point appears exactly at index period-1', () => {
     expect(computeSMA(candles, 10, 'close')[0].time).toBe(candles[9].time);
   });
-  it.each([0, -1, 1.5, NaN, Infinity])('rejects invalid period %s', (period) => {
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects invalid period %s', (period) => {
     expect(() => computeSMA(candles, period, 'close')).toThrow(RangeError);
   });
   it('rejects an unknown source', () => {
