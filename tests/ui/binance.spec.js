@@ -140,6 +140,30 @@ test.describe('live updates', () => {
     await expect(page.getByTestId('last-close')).toHaveText('73490.00');
   });
 
+  test('reconciles the last historical candle when the socket subscribes after its close', async ({ page }) => {
+    const correctedRows = RAW.map((row) => [...row]);
+    correctedRows.at(-1)[2] = '73499.00';
+    correctedRows.at(-1)[3] = '73470.00';
+    correctedRows.at(-1)[4] = '73480.00';
+    correctedRows.at(-1)[5] = '3.5';
+    const mock = await mockBinance(page, (_, n) => (n === 1 ? {} : { body: correctedRows }));
+    await goLive(page, mock);
+
+    // Simulate the first WebSocket message arriving after the historical last
+    // candle has already closed. Its final WebSocket update was never observed.
+    mock.sockets[0].ws.send(klineMsg({ t: T0 + 60000, o: 73488, h: 73500, l: 73470, c: 73490, v: 1 }));
+    await expect.poll(() => mock.requests.length).toBe(2);
+    await expect.poll(async () => (await candleData(page)).at(-2)?.close).toBe(73480);
+    const bars = await candleData(page);
+    expect(ohlc(bars.at(-2))).toEqual({
+      time: T0 / 1000, open: 73484, high: 73499, low: 73470, close: 73480,
+    });
+    expect(ohlc(bars.at(-1))).toEqual({
+      time: T0 / 1000 + 60, open: 73488, high: 73500, low: 73470, close: 73490,
+    });
+    await expect(page.getByTestId('status')).toContainText('corrected 1 candle(s) from the exchange');
+  });
+
   test('many ticks in a row, both updating and opening bars', async ({ page }) => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
@@ -150,6 +174,14 @@ test.describe('live updates', () => {
       const t = T0 + 60000 * Math.floor(i / 4); // 4 ticks per bar
       // a consistent candle: high/low must enclose the open and the close
       const c = { time: t / 1000, open: 73488, high: Math.max(73488, price) + 5, low: Math.min(73488, price) - 5, close: price, volume: i };
+      if (expected.at(-1).time < c.time) {
+        // Binance sends the final update for the previous candle before the new one.
+        const previous = expected.at(-1);
+        mock.sockets[0].ws.send(klineMsg({
+          t: previous.time * 1000, o: previous.open, h: previous.high, l: previous.low,
+          c: previous.close, v: previous.volume, x: true,
+        }));
+      }
       if (expected.at(-1).time === c.time) expected[expected.length - 1] = c; else expected.push(c);
       mock.sockets[0].ws.send(klineMsg({ t, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume }));
     }
