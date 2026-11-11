@@ -81,14 +81,14 @@ export const MUTANTS = [
   { id: 'coinbase-history-not-sorted', file: 'src/coinbase.js', from: 'candles.sort((a, b) => a.time - b.time);', to: 'candles.sort(() => 0);' },
 
   // --- the page: what the user sees and the connection ---------------------------
-  { id: 'page-stale-answers-accepted', file: 'src/app.js', from: 'limit: provider.historyBars });\n    if (gen !== live.gen) return;', to: 'limit: provider.historyBars });', ui: U('superseded', EXCHANGES) },
+  { id: 'page-stale-answers-accepted', file: 'src/app.js', from: 'limit: provider.historyBars, signal: requestController.signal });\n    if (gen !== live.gen) return;', to: 'limit: provider.historyBars, signal: requestController.signal });', ui: U('superseded', EXCHANGES) },
   { id: 'page-minute-gaps-reload-coinbase', file: 'src/app.js', from: '&& live.provider.reloadOnBarGap) {', to: ') {', ui: U('minutes without trades', EXCHANGES) },
   { id: 'page-live-candles-not-validated', file: 'src/app.js', from: '  if (validateCandle(candle)) { // the same rule as for the history', to: '  if (false) {', ui: U('impossible', EXCHANGES) },
   { id: 'page-no-automatic-reconnect', file: 'src/app.js', from: 'onClose: () => { if (gen === live.gen) scheduleRetry(null); },', to: 'onClose: () => { if (gen === live.gen) { live.conn = null; live.offline = true; showStatus(); } },', ui: U('reconnects by itself|automatic reconnect', EXCHANGES) },
   { id: 'page-constant-retry-pause', file: 'src/app.js', from: 'const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1));', to: 'const delay = RETRY_BASE_MS;', ui: U('growing pauses', EXCHANGES) },
   { id: 'page-watchdog-off', file: 'src/app.js', from: 'if (silent > live.provider.staleMs) return scheduleRetry(', to: 'if (false) return scheduleRetry(', ui: U('silent|heartbeats keep', EXCHANGES) },
   {
-    id: 'page-disconnect-button-not-final', file: 'src/app.js', from: '  if (live.manualOff) return;\n  cancelRetry();', to: '  cancelRetry();', ui: U('Disconnect button is final', EXCHANGES),
+    id: 'page-disconnect-button-not-final', file: 'src/app.js', from: '  if (live.manualOff || live.retry) return;', to: '  if (live.retry) return;', ui: U('Disconnect button is final', EXCHANGES),
     equivalent: 'a guard that nothing can reach: after Disconnect the connection is closed by us (no close event) and every answer still on its way is stale by the generation check',
   },
   { id: 'page-disconnect-ignored-while-loading', file: 'src/app.js', from: 'if (!live.conn && !live.retry && !live.loading) return;', to: 'if (!live.conn && !live.retry) return;', ui: U('on its way|still running', EXCHANGES) },
@@ -108,7 +108,7 @@ export const MUTANTS = [
   { id: 'min-bars-ema-sma-start-ignored', file: 'src/indicators.js', from: "return start === 'sma' ? period : 1;", to: 'return 1;' },
   { id: 'page-empty-line-not-explained', file: 'src/app.js', from: 'const noValues = have > 0 && have < first;', to: 'const noValues = false;', ui: U('no values') },
   { id: 'page-note-shown-without-data', file: 'src/app.js', from: 'const noValues = have > 0 && have < first;', to: 'const noValues = have < first;', ui: U('no data, no note') },
-  { id: 'page-old-connection-left-open', file: 'src/app.js', from: '  cancelRetry();\n  live.conn?.close();', to: '  cancelRetry();', ui: U('seed', ['tests/ui/fuzz.spec.js']) },
+  { id: 'page-old-connection-left-open', file: 'src/app.js', from: '  live.requestController = null;\n  live.conn?.close();', to: '  live.requestController = null;', ui: U('seed', ['tests/ui/fuzz.spec.js']) },
   { id: 'page-waiting-reconnect-not-cancelled', file: 'src/app.js', from: '  live.gen++; // any answer still in flight is now stale\n  cancelRetry();', to: '  live.gen++; // any answer still in flight is now stale', ui: U('cancels it|seed', [...EXCHANGES, 'tests/ui/fuzz.spec.js']) },
 
   // --- the checks themselves ----------------------------------------------------------
