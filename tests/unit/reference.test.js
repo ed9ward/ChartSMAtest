@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareSeries } from '../../checks/reference.js';
+import { compareSeries, refBB } from '../../checks/reference.js';
 
 describe('compareSeries', () => {
   it('uses a relative tolerance for values below one', () => {
@@ -33,5 +33,17 @@ describe('compareSeries', () => {
       [{ time: 2, value: 1 }],
       [{ time: 1, value: 1 }],
     )).toThrow(/time mismatch/);
+  });
+});
+
+describe('independent Bollinger reference', () => {
+  it('retains small variance around a very large price level', () => {
+    const prices = [1e12, 1e12 + 0.001, 1e12 - 0.001, 1e12 + 0.002];
+    const candles = prices.map((close, i) => ({
+      time: i + 1, open: close, high: close, low: close, close, volume: 1,
+    }));
+    const bands = refBB(candles, 4, 2, 'close');
+    expect(bands.upper[0].value).toBeGreaterThan(bands.basis[0].value);
+    expect(bands.lower[0].value).toBeLessThan(bands.basis[0].value);
   });
 });
