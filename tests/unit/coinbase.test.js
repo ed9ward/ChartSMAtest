@@ -799,6 +799,32 @@ describe('stream: the exchange corrects a closed candle', () => {
     expect(t.events).toContainEqual(expect.objectContaining({ type: 'reconcile-failed', attempts: 2, reason: 'REST unavailable' }));
     expect(t.resyncs).toEqual([]);
   });
+  it('aborts an in-flight candle reconciliation when the stream is closed', async () => {
+    let requestSignal;
+    const t = setup({
+      reconcileDelayMs: 0,
+      fetchFn: async (_url, { signal } = {}) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    });
+    t.send(lastMatch(0));
+    t.send(match(1, 10, 100, 1));
+    t.send(match(2, 61, 110, 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestSignal).toBeDefined();
+    t.conn.close();
+    await flush();
+    expect(requestSignal.aborted).toBe(true);
+    expect(t.events).toEqual([]);
+    expect(t.corrections).toEqual([]);
+  });
   it('is off when reconcileDelayMs is null', async () => {
     const t = setup({ reconcileDelayMs: null, candles: [[BASE, 1, 2, 1, 2, 9]] });
     t.send(lastMatch(0));
