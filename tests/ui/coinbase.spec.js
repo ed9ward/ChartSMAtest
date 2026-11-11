@@ -41,7 +41,7 @@ async function mockCoinbase(page, respond, { daily, trades } = {}) {
   const dailyRequests = [];
   const tradeRequests = [];
   const sockets = [];
-  const state = { dailyHistory: false, lastId: 1000, trades: [], restStatus: 200, noLastMatch: false };
+  const state = { dailyHistory: false, lastId: 1000, latestTrade: { id: 1000, time: T0 + 1, price: 73488, size: 0.1 }, trades: [], restStatus: 200, noLastMatch: false };
   await page.route('https://api.exchange.coinbase.com/products/*/candles*', async (route) => {
     const url = new URL(route.request().url());
     const isDaily = url.searchParams.get('granularity') === '86400' && !state.dailyHistory;
@@ -79,7 +79,7 @@ async function mockCoinbase(page, respond, { daily, trades } = {}) {
       const msg = JSON.parse(String(m));
       entry.received.push(msg);
       // like Coinbase: the first message after subscribing is the newest trade that already happened
-      if (msg.type === 'subscribe' && !state.noLastMatch) ws.send(matchMsg({ id: state.lastId, time: T0 + 1, price: 73488, type: 'last_match' }));
+      if (msg.type === 'subscribe' && !state.noLastMatch) ws.send(matchMsg({ ...state.latestTrade, type: 'last_match' }));
     });
     ws.onClose(() => { entry.closed = true; });
     sockets.push(entry);
@@ -91,6 +91,7 @@ async function mockCoinbase(page, respond, { daily, trades } = {}) {
 function tape(mock) {
   const make = (time, price, size = 0.1) => {
     const trade = { id: ++mock.state.lastId, time, price, size };
+    mock.state.latestTrade = trade;
     mock.state.trades.push({ trade_id: trade.id, time: iso(time), price: String(price), size: String(size), side: 'buy' });
     return trade;
   };
@@ -513,7 +514,8 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     await expect.poll(() => mock.sockets.length).toBe(2);
     await expect(status(page)).toHaveText('Live BTC-USD 1m');
     expect(mock.requests).toHaveLength(3);
-    expect((await candleData(page)).map(ohlc)).toEqual(initial.map(ohlc));
+    const recovered = (await candleData(page)).at(-1);
+    expect(ohlc(recovered)).toEqual({ time: T0, open: 73490, high: 73495, low: 73100, close: 73495 });
   });
 
   test('a REST error while recovering also reloads everything', async ({ page, errors }) => {
