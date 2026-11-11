@@ -496,7 +496,6 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     await page.clock.install({ time: new Date('2026-11-10T16:34:51Z') });
     const mock = await mockCoinbase(page, (_, n) => (n === 2 ? { status: 500, body: '' } : {}));
     await goLive(page, mock);
-    const initial = await candleData(page);
     mock.state.restStatus = 500;
     const t = tape(mock);
     t.send(0, T0 + 10, 73490, 1);
