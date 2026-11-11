@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { COINBASE_GRANULARITY, MAX_CANDLES, MAX_TRADES, parseCandleRow, fetchHistory, parseMatch, parseHeartbeat, fetchTrades, openStream } from '../../src/coinbase.js';
+import { COINBASE_GRANULARITY, MAX_CANDLES, MAX_TRADES, parseCandleRow, fetchHistory, parseMatch, parseHeartbeat, fetchTrades, fetchTradesForBucket, openStream } from '../../src/coinbase.js';
 import { INTERVAL_SECONDS } from '../../src/live.js';
 import { PROVIDERS } from '../../src/providers.js';
 import { validateCandle } from '../../src/sanitize.js';
@@ -185,6 +185,28 @@ describe('fetchTrades', () => {
       fetchFn: async () => ok(all.sort((a, b) => b.trade_id - a.trade_id)),
     });
     expect(trades.map((trade) => trade.tradeId)).toEqual([11, 12]);
+  });
+  it('reconstructs a busy current candle across multiple older-trade pages', async () => {
+    const lastTrade = { tradeId: 1002, price: 102, size: 1, time: BASE + 30 };
+    const older = Array.from({ length: 1001 }, (_, i) => ({
+      trade_id: i + 1, time: at(10), price: String(100 + i / 1000), size: '0.01',
+    }));
+    const urls = [];
+    const trades = await fetchTradesForBucket({
+      symbol: 'BTC-USD', lastTrade, bucketStart: BASE, intervalSeconds: 60,
+      fetchFn: async (url) => {
+        urls.push(url);
+        const cursor = Number(new URL(url).searchParams.get('after'));
+        return ok(older.filter((trade) => trade.trade_id < cursor)
+          .sort((a, b) => b.trade_id - a.trade_id).slice(0, MAX_TRADES));
+      },
+    });
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain('after=1002');
+    expect(urls[1]).toContain('after=2');
+    expect(trades).toHaveLength(1002);
+    expect(trades[0].tradeId).toBe(1);
+    expect(trades.at(-1).tradeId).toBe(1002);
   });
   it('fails closed when the configured pagination bound is exhausted', async () => {
     const all = Array.from({ length: 3000 }, (_, i) => ({
