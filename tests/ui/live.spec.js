@@ -397,7 +397,7 @@ test.describe('performance and long-lived chart resources', () => {
     });
     expect(result.added).toBeGreaterThan(100);
     expect(result.removed).toBeGreaterThan(100);
-    expect(result.difference).toBe(result.active);
+    expect(result.difference).toBe(0); // the initial SMA series exists before instrumentation; every switch must balance add/remove
     expect(result.active).toBe(1); // final selection is RSI
     expect(await page.getByTestId('bar-count').textContent()).toBe('60');
   });
