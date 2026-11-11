@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { compareSeries, refBB } from '../../checks/reference.js';
+import { computeBB } from '../../src/indicators.js';
 
 describe('compareSeries', () => {
   it('uses a relative tolerance for values below one', () => {
@@ -43,7 +44,10 @@ describe('independent Bollinger reference', () => {
       time: i + 1, open: close, high: close, low: close, close, volume: 1,
     }));
     const bands = refBB(candles, 4, 2, 'close');
+    const actual = computeBB(candles, 4, 2, 'close');
     expect(bands.upper[0].value).toBeGreaterThan(bands.basis[0].value);
     expect(bands.lower[0].value).toBeLessThan(bands.basis[0].value);
+    expect(actual.upper[0].value).toBeGreaterThan(actual.basis[0].value);
+    expect(actual.lower[0].value).toBeLessThan(actual.basis[0].value);
   });
 });
