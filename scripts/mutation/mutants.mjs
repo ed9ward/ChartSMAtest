@@ -23,7 +23,7 @@ export const MUTANTS = [
   { id: 'ema-first-start-skipped', file: 'src/indicators.js', from: "    } else if (start === 'first') {\n      ema = v[i];", to: "    } else if (false) {\n      ema = v[i];" },
   { id: 'ema-sma-seed-wrong', file: 'src/indicators.js', from: 'ema = seedSum / period;', to: 'ema = seedSum / (period + 1);' },
   { id: 'ema-chain-not-reset', file: 'src/indicators.js', from: 'if (v[i] === null) { reset(); continue; }\n    if (ema !== null) {', to: 'if (v[i] === null) { continue; }\n    if (ema !== null) {' },
-  { id: 'ema-start-not-validated', file: 'src/indicators.js', from: '  assertEmaStart(start);\n', to: '' },
+  { id: 'ema-start-not-validated', file: 'src/indicators.js', from: "export function computeEMA(candles, period, source = 'close', start = 'first') {\n  assertPeriod(period);\n  assertSource(source);\n  assertEmaStart(start);", to: "export function computeEMA(candles, period, source = 'close', start = 'first') {\n  assertPeriod(period);\n  assertSource(source);" },
   { id: 'bb-sample-deviation', file: 'src/indicators.js', from: '(b - mean) ** 2, 0) / period);', to: '(b - mean) ** 2, 0) / (period - 1));' },
   { id: 'bb-lower-above-basis', file: 'src/indicators.js', from: 'const lower = mean - mult * sd;', to: 'const lower = mean + mult * sd;' },
   { id: 'bb-bad-values-not-skipped', file: 'src/indicators.js', from: 'if (window.includes(null)) continue;', to: '' },
