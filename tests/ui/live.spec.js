@@ -319,3 +319,99 @@ test.describe('2000 bars', () => {
     await expectLineAt(page, { tolerance: 5 });
   });
 });
+
+
+test.describe('performance and long-lived chart resources', () => {
+  test('1000-candle setData and full redraw stay within the browser budget', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('long');
+    const setDataMs = await page.evaluate(() => {
+      const candles = window.__app.rawCandleData().slice(-1000);
+      const series = window.__app.candleSeries;
+      const started = performance.now();
+      series.setData(candles);
+      return performance.now() - started;
+    });
+    expect(setDataMs).toBeLessThan(1000);
+
+    const redrawMs = await page.evaluate(() => {
+      const source = document.getElementById('source');
+      const period = document.getElementById('period');
+      const started = performance.now();
+      for (let i = 0; i < 25; i++) {
+        source.value = ['close', 'hl2', 'hlc3', 'ohlc4'][i % 4];
+        source.dispatchEvent(new Event('change'));
+        period.value = String(5 + (i % 40));
+        period.dispatchEvent(new Event('input'));
+      }
+      return performance.now() - started;
+    });
+    expect(redrawMs).toBeLessThan(5000);
+    await expect(page.getByTestId('bar-count')).toHaveText('2000');
+  });
+
+  test('1000 incremental feed updates do not trigger an unbounded chart rebuild', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('scenario').selectOption('long');
+    const result = await page.evaluate(() => {
+      const series = window.__app.candleSeries;
+      let setDataCalls = 0;
+      let updateCalls = 0;
+      const setData = series.setData.bind(series);
+      const update = series.update.bind(series);
+      series.setData = (...args) => { setDataCalls++; return setData(...args); };
+      series.update = (...args) => { updateCalls++; return update(...args); };
+      const started = performance.now();
+      for (let i = 0; i < 1000; i++) window.__app.step();
+      return {
+        elapsedMs: performance.now() - started,
+        setDataCalls,
+        updateCalls,
+        bars: window.__app.rawCandleData().length,
+      };
+    });
+    expect(result.elapsedMs).toBeLessThan(5000);
+    expect(result.setDataCalls).toBe(0);
+    expect(result.updateCalls).toBe(1000);
+    expect(result.bars).toBe(2200);
+  });
+
+  test('repeated indicator switches remove obsolete series instead of accumulating them', async ({ page }) => {
+    await open(page);
+    const result = await page.evaluate(() => {
+      const chart = window.__app.chart;
+      let added = 0;
+      let removed = 0;
+      const addSeries = chart.addSeries.bind(chart);
+      const removeSeries = chart.removeSeries.bind(chart);
+      chart.addSeries = (...args) => { added++; return addSeries(...args); };
+      chart.removeSeries = (...args) => { removed++; return removeSeries(...args); };
+      const indicator = document.getElementById('indicator');
+      const kinds = ['sma', 'ema', 'bb', 'rsi'];
+      for (let i = 0; i < 160; i++) {
+        indicator.value = kinds[i % kinds.length];
+        indicator.dispatchEvent(new Event('change'));
+      }
+      const active = Object.keys(window.__app.lineSeries()).length;
+      return { added, removed, active, difference: added - removed };
+    });
+    expect(result.added).toBeGreaterThan(100);
+    expect(result.removed).toBeGreaterThan(100);
+    expect(result.difference).toBe(result.active);
+    expect(result.active).toBe(1); // final selection is RSI
+    expect(await page.getByTestId('bar-count').textContent()).toBe('60');
+  });
+
+  test('start/stop cycles leave no active demo timer', async ({ page }) => {
+    await open(page);
+    const state = await page.evaluate(() => {
+      for (let i = 0; i < 100; i++) {
+        document.getElementById('start').click();
+        document.getElementById('stop').click();
+      }
+      return window.__app.state();
+    });
+    expect(state.streaming).toBe(false);
+    expect(state.ticks).toBe(0);
+  });
+});
