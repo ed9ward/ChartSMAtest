@@ -263,6 +263,7 @@ export function openStream({
   const granularity = COINBASE_GRANULARITY[interval];
   const ws = new WS(COINBASE_WS);
   let closedByUs = false;
+  const abortController = new AbortController();
   let current = seed ? { ...seed } : null;
   let lastId = null;          // newest trade applied to the candle
   let bootstrapping = false;
@@ -287,7 +288,7 @@ export function openStream({
     const check = async (attempt) => {
       if (closedByUs) return;
       try {
-        const exact = (await fetchHistory({ symbol, interval, fetchFn })).find((c) => c.time === closed.time);
+        const exact = (await fetchHistory({ symbol, interval, signal: abortController.signal, fetchFn })).find((c) => c.time === closed.time);
         if (closedByUs) return;
         if (exact) {
           if (!sameCandle(exact, closed)) onKline({ candle: exact, correction: true });
@@ -341,7 +342,7 @@ export function openStream({
     if (target <= lastId) return; // the missing trades arrived in the meantime
     recovering = true;
     try {
-      const fromRest = new Map((await fetchTrades({ symbol, fetchFn, afterTradeId: lastId, throughTradeId: target })).map((t) => [t.tradeId, t]));
+      const fromRest = new Map((await fetchTrades({ symbol, fetchFn, signal: abortController.signal, afterTradeId: lastId, throughTradeId: target })).map((t) => [t.tradeId, t]));
       if (closedByUs) return;
       let fetched = 0;
       for (let id = lastId + 1; id <= target; id++) {
@@ -372,7 +373,7 @@ export function openStream({
     const bucket = Math.floor(trade.time / granularity) * granularity;
     try {
       const trades = await fetchTradesForBucket({
-        symbol, lastTrade: trade, bucketStart: bucket, intervalSeconds: granularity, fetchFn,
+        symbol, lastTrade: trade, bucketStart: bucket, intervalSeconds: granularity, signal: abortController.signal, fetchFn,
       });
       if (closedByUs) return;
       if (current && bucket < current.time) {
@@ -462,6 +463,7 @@ export function openStream({
   return {
     close() {
       closedByUs = true;
+      abortController.abort();
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
       ws.close();

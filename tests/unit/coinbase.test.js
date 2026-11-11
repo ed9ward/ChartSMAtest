@@ -679,6 +679,39 @@ describe('stream: when the missing trades cannot be fetched', () => {
     expect(t.resyncs).toEqual([]);
     expect(t.ws.closed).toBe(true);
   });
+
+  it('aborts an in-flight REST recovery when the stream is closed', async () => {
+    let requestSignal;
+    const t = setup({
+      fetchFn: async (_url, { signal } = {}) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          if (signal?.aborted) {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+            return;
+          }
+          signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          }, { once: true });
+        });
+      },
+    });
+    t.send(lastMatch(0));
+    t.send(match(1, 1, 100, 1));
+    t.send(match(3, 3, 102, 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestSignal).toBeDefined();
+    expect(requestSignal.aborted).toBe(false);
+    t.conn.close();
+    await flush();
+    expect(requestSignal.aborted).toBe(true);
+    expect(t.resyncs).toEqual([]);
+    expect(t.ws.closed).toBe(true);
+  });
 });
 
 describe('stream: the exchange corrects a closed candle', () => {
