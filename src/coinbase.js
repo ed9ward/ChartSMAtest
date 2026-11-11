@@ -158,6 +158,84 @@ export async function fetchTrades({
   return [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
 }
 
+/**
+ * Rebuild the currently forming candle from its complete trade history.
+ * Coinbase's first last_match gives us an exact upper trade-ID boundary. Walking
+ * older REST pages from that ID until the bucket boundary avoids guessing which
+ * trades were already present in the earlier candle snapshot.
+ */
+export async function fetchTradesForBucket({
+  symbol, lastTrade, bucketStart, intervalSeconds, signal, fetchFn = fetch, maxPages = 10,
+}) {
+  if (!lastTrade || !Number.isSafeInteger(lastTrade.tradeId) || lastTrade.tradeId < 0) {
+    throw new RangeError('lastTrade must have a non-negative safe trade ID');
+  }
+  if (!Number.isSafeInteger(bucketStart) || bucketStart < 0
+    || !Number.isSafeInteger(intervalSeconds) || intervalSeconds <= 0
+    || bucketStart % intervalSeconds !== 0) {
+    throw new RangeError('bucketStart and intervalSeconds must describe an aligned bucket');
+  }
+  if (Math.floor(lastTrade.time / intervalSeconds) * intervalSeconds !== bucketStart) {
+    throw new RangeError('lastTrade does not belong to the requested bucket');
+  }
+  if (!Number.isInteger(maxPages) || maxPages < 1) throw new RangeError('maxPages must be a positive integer');
+
+  const collected = new Map([[lastTrade.tradeId, lastTrade]]);
+  let cursor = lastTrade.tradeId;
+  let boundaryReached = false;
+
+  for (let pageNumber = 0; pageNumber < maxPages; pageNumber++) {
+    const params = new URLSearchParams({ limit: String(MAX_TRADES), after: String(cursor) });
+    const url = `${COINBASE_REST}/products/${encodeURIComponent(symbol)}/trades?${params}`;
+    const res = await fetchFn(url, { signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    if (!Array.isArray(body)) throw new Error(body?.message || 'unexpected response');
+
+    const page = body.map((t) => toTrade(t?.trade_id, t?.price, t?.size, t?.time));
+    if (page.some((trade) => trade === null)) throw new Error('invalid trade row during candle bootstrap');
+    if (page.length === 0) { boundaryReached = true; break; }
+
+    const ids = page.map((trade) => trade.tradeId);
+    const nextCursor = Math.min(...ids);
+    if (!Number.isSafeInteger(nextCursor) || nextCursor >= cursor) {
+      throw new Error('Coinbase candle bootstrap pagination did not advance');
+    }
+    for (const trade of page) {
+      if (trade.tradeId >= cursor) throw new Error('Coinbase candle bootstrap returned a non-older trade');
+      if (trade.time >= bucketStart) collected.set(trade.tradeId, trade);
+      else boundaryReached = true;
+    }
+    if (boundaryReached || body.length < MAX_TRADES) {
+      boundaryReached = true;
+      break;
+    }
+    cursor = nextCursor;
+  }
+
+  if (!boundaryReached) throw new Error(`current candle exceeds ${maxPages * MAX_TRADES} REST records`);
+  const trades = [...collected.values()].sort((a, b) => a.tradeId - b.tradeId);
+  for (let i = 1; i < trades.length; i++) {
+    if (trades[i].tradeId !== trades[i - 1].tradeId + 1) {
+      throw new Error(`trade gap during candle bootstrap at ID ${trades[i - 1].tradeId + 1}`);
+    }
+  }
+  if (trades.some((trade) => trade.time < bucketStart
+    || Math.floor(trade.time / intervalSeconds) * intervalSeconds !== bucketStart)) {
+    throw new Error('Coinbase candle bootstrap crossed a bucket boundary');
+  }
+  return trades;
+}
+
+const candleFromTrades = (trades, bucketStart) => ({
+  time: bucketStart,
+  open: trades[0].price,
+  high: Math.max(...trades.map((trade) => trade.price)),
+  low: Math.min(...trades.map((trade) => trade.price)),
+  close: trades[trades.length - 1].price,
+  volume: trades.reduce((sum, trade) => sum + trade.size, 0),
+});
+
 const sameNumber = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k) => sameNumber(a[k], b[k]));
 
@@ -179,13 +257,15 @@ const sameCandle = (a, b) => ['open', 'high', 'low', 'close', 'volume'].every((k
 export function openStream({
   symbol, interval, onKline, onClose, onError, onEvent, onResync, onActivity, seed,
   WS = WebSocket, fetchFn = fetch, graceMs = 300, reconcileDelayMs = 2000,
-  reconcileAttempts = 3, reconcileRetryMs = 1000, applyLastMatchWhenUnseeded = true,
+  reconcileAttempts = 3, reconcileRetryMs = 1000, applyLastMatchWhenUnseeded = true, bootstrapBucket = false,
 }) {
   const granularity = COINBASE_GRANULARITY[interval];
   const ws = new WS(COINBASE_WS);
   let closedByUs = false;
   let current = seed ? { ...seed } : null;
   let lastId = null;          // newest trade applied to the candle
+  let bootstrapping = false;
+  const bootstrapBuffer = [];
   let behind = 0;             // heartbeats in a row that were ahead of lastId
   let heartbeatId = null;     // newest trade id a heartbeat reported
   let recovering = false;
@@ -287,9 +367,53 @@ export function openStream({
     }
   };
 
+  const finishBootstrap = async (trade) => {
+    const bucket = Math.floor(trade.time / granularity) * granularity;
+    try {
+      const trades = await fetchTradesForBucket({
+        symbol, lastTrade: trade, bucketStart: bucket, intervalSeconds: granularity, fetchFn,
+      });
+      if (closedByUs) return;
+      if (current && bucket < current.time) {
+        // The REST snapshot is newer than this delayed first message; keep the newer seed.
+      } else {
+        if (current && bucket > current.time && reconcileDelayMs !== null) reconcile({ ...current });
+        current = candleFromTrades(trades, bucket);
+        onKline({ candle: { ...current } });
+      }
+    } catch (error) {
+      // A very busy bucket or a transient REST failure must not stop the live feed.
+      // Fall back to the previous safe baseline behavior; the closed candle is later
+      // reconciled against Coinbase's candle endpoint.
+      event('bootstrap-failed', { reason: error instanceof Error ? error.message : String(error) });
+      const bucket = Math.floor(trade.time / granularity) * granularity;
+      if (!current || bucket > current.time) {
+        apply(trade);
+      } else if (bucket === current.time && !trade.last) {
+        apply(trade);
+      } else if (!current && applyLastMatchWhenUnseeded) {
+        apply(trade);
+      }
+    } finally {
+      bootstrapping = false;
+      const buffered = bootstrapBuffer.splice(0).sort((a, b) => a.tradeId - b.tradeId);
+      for (const pending of buffered) accept(pending);
+      if (!closedByUs && !gaveUp && heartbeatId !== null && heartbeatId > lastId && behind >= 2) recover();
+    }
+  };
+
   const accept = (trade) => {
+    if (bootstrapping) {
+      if (trade.tradeId > lastId && !bootstrapBuffer.some((item) => item.tradeId === trade.tradeId)) bootstrapBuffer.push(trade);
+      return;
+    }
     if (lastId === null) { // the first message fixes where we are
       lastId = trade.tradeId;
+      if (trade.last && bootstrapBucket) {
+        bootstrapping = true;
+        finishBootstrap(trade);
+        return;
+      }
       // A last_match already represented by a same-bucket REST seed must not be counted twice.
       // If it starts a newer bucket, or there is no seed, it is not part of the REST snapshot.
       const bucket = Math.floor(trade.time / granularity) * granularity;
@@ -308,6 +432,11 @@ export function openStream({
   };
 
   const heartbeat = ({ lastTradeId }) => {
+    if (bootstrapping) {
+      if (lastTradeId > (heartbeatId ?? lastId)) heartbeatId = lastTradeId;
+      behind = lastTradeId > lastId ? behind + 1 : 0;
+      return;
+    }
     if (lastId === null || lastTradeId <= lastId) { behind = 0; return; }
     if (++behind >= 2) { // one heartbeat can simply be ahead of the match messages
       heartbeatId = lastTradeId;
