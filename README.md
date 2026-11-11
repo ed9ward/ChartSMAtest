@@ -23,6 +23,8 @@ npm test            # both
 ## Layout
 
 - `src/sma.js` SMA for open/high/low/close/volume/hl2/hlc3/ohlc4, any period
+- `src/indicators.js` pure reference calculations for SMA, EMA, Bollinger Bands and RSI
+- `src/indicator-engine.js` incremental live calculations; only the newest candle is recalculated on each update
 - `src/generator.js` seeded sine + noise candles, tick-by-tick forming candle
 - `src/feed.js` live feed: replays candles tick by tick (5 ticks per candle)
 - `src/live.js` Binance public data: REST klines + WebSocket kline stream (no API key)
@@ -49,4 +51,4 @@ Binance and Coinbase REST/WebSocket messages are parsed strictly: numeric fields
 
 Coinbase live candles use the `matches` and `heartbeat` channels. Missed trades are recovered through the public REST Trades endpoint using trade-ID cursor pagination, up to 10 pages (10,000 records) per recovery; if the missing range cannot be covered, the app requests a full history resync rather than accepting a hole. Pagination uses the documented `before` / `after` query parameters and does not depend on browser access to response headers. Closed candles are checked against REST with bounded retries. Because REST candle rows do not include trade IDs, a `last_match` inside the same bucket as the history seed is not added twice; the exchange's final candle is reconciled after the bucket closes.
 
-Live chart history is capped at 1,000 candles. Trimming old bars redraws the series without resetting the user's zoom.
+Live chart history is capped at 1,000 candles. Trimming old bars redraws the series without resetting the user's zoom. On ordinary live updates, SMA and Bollinger Bands calculate only the newest window, while EMA and RSI advance their recursive state in constant time; changing settings or applying historical corrections rebuilds the engine from the available candles.
