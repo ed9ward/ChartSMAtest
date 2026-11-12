@@ -99,7 +99,7 @@ export const MUTANTS = [
   { id: 'page-binance-startup-boundary-not-reconciled', file: 'src/app.js', from: 'void reconcileInitialBinanceBoundary(gen, last.time, interval);', to: 'void Promise.resolve();', ui: U('subscribes after its close', ['tests/ui/binance.spec.js']) },
   { id: 'page-day-by-the-computers-clock', file: 'src/app.js', from: 'utcDay(candle.time * 1000) > live.dayIndex', to: 'utcDay(Date.now()) !== live.dayIndex', ui: U('exchange\'s own bars', EXCHANGES) },
   { id: 'page-corrections-not-applied', file: 'src/app.js', from: '    state.candles[index] = candle;\n    live.corrected++;', to: '    live.corrected++;', ui: U('closed candles are checked|corrected', EXCHANGES) },
-  { id: 'page-note-ignores-the-ema-start', file: 'src/app.js', from: 'const needed = settleBars(state.indicator, period, { start: state.start });', to: 'const needed = settleBars(state.indicator, period);', ui: U('settled') },
+  { id: 'page-note-ignores-the-ema-start', file: 'src/app.js', from: 'const needed = settleBars(kind, used, { start });', to: 'const needed = settleBars(kind, used);', ui: U('settled') },
   { id: 'page-zoom-reset-on-every-change', file: 'src/app.js', from: '  if (fit) chart.timeScale().fitContent();', to: '  chart.timeScale().fitContent();', ui: U('zoom') },
   { id: 'page-two-decimals-for-everything', file: 'src/app.js', from: 'const price = priceDecimals(state.candles.map((c) => c.close));', to: 'const price = 2;', ui: U('what a trader reads|cheap coin', ['tests/ui/indicators.spec.js', 'tests/ui/binance.spec.js']) },
   { id: 'page-clock-shows-24-oclock', file: 'src/app.js', from: "{ hourCycle: 'h23' }", to: "{ hourCycle: 'h24' }", ui: U('00:05'),
@@ -107,8 +107,8 @@ export const MUTANTS = [
 
   { id: 'min-bars-rsi-off-by-one', file: 'src/indicators.js', from: "if (kind === 'rsi') return period + 1;", to: "if (kind === 'rsi') return period;" },
   { id: 'min-bars-ema-sma-start-ignored', file: 'src/indicators.js', from: "return start === 'sma' ? period : 1;", to: 'return 1;' },
-  { id: 'page-empty-line-not-explained', file: 'src/app.js', from: 'const noValues = have > 0 && have < first;', to: 'const noValues = false;', ui: U('no values') },
-  { id: 'page-note-shown-without-data', file: 'src/app.js', from: 'const noValues = have > 0 && have < first;', to: 'const noValues = have < first;', ui: U('no data, no note') },
+  { id: 'page-empty-line-not-explained', file: 'src/app.js', from: 'if (have > 0 && have < first) return `${label}', to: 'if (false) return `${label}', ui: U('no values') },
+  { id: 'page-note-shown-without-data', file: 'src/app.js', from: 'if (have > 0 && have < first) return `${label}', to: 'if (have < first) return `${label}', ui: U('no data, no note') },
   { id: 'page-old-connection-left-open', file: 'src/app.js', from: '  live.requestController = null;\n  live.conn?.close();', to: '  live.requestController = null;', ui: U('seed', ['tests/ui/fuzz.spec.js']) },
   { id: 'page-waiting-reconnect-not-cancelled', file: 'src/app.js', from: '  live.gen++; // any answer still in flight is now stale\n  cancelRetry();', to: '  live.gen++; // any answer still in flight is now stale', ui: U('cancels it|seed', [...EXCHANGES, 'tests/ui/fuzz.spec.js']) },
 
@@ -147,4 +147,11 @@ export const MUTANTS = [
   { id: 'live-prices-not-cross-checked', file: 'checks/live-exchanges.js', from: 'assert(Math.abs(pb - pc) / pc < 0.01,', to: 'assert(Math.abs(pb - pc) / pc < 100,' },
   { id: 'live-refusal-not-explained', file: 'checks/live-exchanges.js', from: 'if (status === 451 || status === 403) return', to: 'if (false) return' },
   { id: 'live-stale-bar-accepted', file: 'checks/live-exchanges.js', from: 'assert(age >= 0 && age < 180,', to: 'assert(age >= 0,' },
+
+  // --- several indicators at once (tests/ui/multi-indicators.spec.js) ----------------------------------------------------------
+  { id: 'multi-switched-off-lines-stay', file: 'src/app.js', from: 'lines = enabled().flatMap((kind) => {', to: 'lines = KINDS.flatMap((kind) => {', ui: U('switching indicators|on:', ['tests/ui/multi-indicators.spec.js']) },
+  { id: 'multi-period-always-goes-to-the-sma', file: 'src/app.js', from: "applyParam(kind, 'period', ctl[kind].period.valueAsNumber, 'period')", to: "applyParam('sma', 'period', ctl[kind].period.valueAsNumber, 'period')", ui: U('own settings', ['tests/ui/multi-indicators.spec.js']) },
+  { id: 'multi-source-shared-by-all', file: 'src/app.js', from: "state.indicators[kind].source = ctl[kind].source.value;", to: "for (const k of KINDS) state.indicators[k].source = ctl[kind].source.value;", ui: U('own settings', ['tests/ui/multi-indicators.spec.js']) },
+  { id: 'multi-rsi-read-with-price-decimals', file: 'src/app.js', from: "const decimals = kind === 'rsi' ? 2 :", to: "const decimals = false ? 2 :", ui: U('own number of decimals|RSI below 1', ['tests/ui/multi-indicators.spec.js']) },
+  { id: 'multi-tick-reaches-only-the-first', file: 'src/app.js', from: 'for (const kind of enabled()) latest[kind] = state.engines[kind].upsert(candle);', to: 'for (const kind of enabled().slice(0, 1)) latest[kind] = state.engines[kind].upsert(candle);', ui: U('stream with all four', ['tests/ui/multi-indicators.spec.js']) },
 ];

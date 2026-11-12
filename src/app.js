@@ -18,10 +18,15 @@ const BUG = new URLSearchParams(location.search).get('bug');
 
 const $ = (id) => document.getElementById(id);
 const el = Object.fromEntries(
-  ['indicator', 'source', 'period', 'mult', 'mult-label', 'ema-start', 'start-label', 'scenario', 'symbol', 'interval', 'start', 'stop', 'disconnect', 'reconnect',
-    'status', 'settle-note', 'bar-count', 'last-close', 'last-update', 'legend-day', 'day-change', 'legend-label', 'last-sma', 'legend-bands', 'last-bb-upper', 'last-bb-lower']
+  ['mult', 'ema-start', 'scenario', 'symbol', 'interval', 'start', 'stop', 'disconnect', 'reconnect',
+    'status', 'settle-note', 'bar-count', 'last-close', 'last-update', 'legend-day', 'day-change',
+    'legend-sma', 'legend-ema', 'legend-bb', 'legend-rsi', 'last-sma', 'last-ema', 'last-bb-basis', 'last-bb-upper', 'last-bb-lower', 'last-rsi']
     .map((id) => [id, $(id)]),
 );
+
+const KINDS = ['sma', 'ema', 'bb', 'rsi']; // the order they are listed in, drawn in and reported in
+// Every indicator has its own switch, period and source (and the EMA its start, Bollinger its multiplier).
+const ctl = Object.fromEntries(KINDS.map((k) => [k, { on: $(`ind-${k}`), period: $(`period-${k}`), source: $(`source-${k}`) }]));
 
 const chart = createChart($('chart'), {
   autoSize: true,
@@ -33,22 +38,26 @@ const candleSeries = chart.addSeries(CandlestickSeries, {
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
 });
 
-const state = { decimals: { price: 2, lines: {} }, candles: [], indicatorEngine: null, indicator: 'sma', source: 'close', period: 20, mult: 2, start: 'first', scenario: 'normal', issues: [], updatedAt: null };
+const newIndicators = () => Object.fromEntries(KINDS.map((k) => [k, {
+  on: k === 'sma', source: 'close', period: INDICATORS[k].defaults.period, mult: INDICATORS[k].defaults.mult ?? 2, start: INDICATORS[k].defaults.start ?? 'first',
+}]));
+const state = { decimals: { price: 2, lines: {} }, candles: [], engines: {}, indicators: newIndicators(), scenario: 'normal', issues: [], updatedAt: null };
 const stream = { feed: null, timer: null, offlineSince: null, ticks: 0 };
 const RETRY_BASE_MS = 1000;   // first attempt after a second, then 2, 4, 8, 16, 30, 30, ...
 const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 10_000;     // a connection that lived this long counts as healthy: the next loss starts again at one second
 const live = { loading: false, attempt: 0, retry: null, manualOff: false, lastActivity: 0, connectedAt: 0, gen: 0, conn: null, offline: false, error: null, rejected: 0, recovered: 0, duplicates: 0, corrected: 0, reconcileFailures: 0, bootstrapFailures: 0, closedThrough: null, boundaryReconcilePending: false, resyncs: 0, symbol: null, provider: null, prevClose: null, dayIndex: null, requestController: null }; // gen invalidates answers of superseded requests
-let lines = []; // [{ key, def, series }] of the selected indicator
+let lines = []; // [{ kind, key, def, series }] of every indicator that is switched on
 
 
 const lastCandle = () => state.candles[state.candles.length - 1];
-const primaryLine = () => lines.find((l) => l.def.primary);
+const enabled = () => KINDS.filter((k) => state.indicators[k].on);
+const primaryLine = () => lines.find((l) => l.def.primary); // the main line of the first indicator that is on
 const lineLast = (key) => lines.find((l) => l.key === key)?.series.data().at(-1);
 
-function params() {
-  const period = BUG === 'offbyone' ? Math.max(1, state.period - 1) : state.period;
-  return { period, mult: state.mult, start: state.start };
+function paramsOf(kind) {
+  const { period, mult, start } = state.indicators[kind];
+  return { period: BUG === 'offbyone' ? Math.max(1, period - 1) : period, mult, start };
 }
 
 function setStatus(text, isError = false) {
@@ -91,21 +100,31 @@ const touch = () => { state.updatedAt = Date.now(); renderUpdated(); };
 setInterval(renderUpdated, 1000);
 
 // EMA and RSI forget the value they started from slowly: with a short history the last values depend on where it begins.
-function updateSettleNote() {
-  const { label } = INDICATORS[state.indicator];
-  const period = params().period;
-  const needed = settleBars(state.indicator, period, { start: state.start });
-  const first = minBars(state.indicator, period, { start: state.start });
+// And an indicator with a period longer than the history has no line at all. Each indicator that is on says so for itself.
+function settleNote(kind) {
+  const { label } = INDICATORS[kind];
+  const { period, start } = state.indicators[kind];
+  const used = paramsOf(kind).period;
+  const needed = settleBars(kind, used, { start });
+  const first = minBars(kind, used, { start });
   const have = state.candles.length;
-  const noValues = have > 0 && have < first;
-  const unsettled = needed > 0 && have > 0 && have < needed;
-  el['settle-note'].hidden = !(noValues || unsettled);
-  el['settle-note'].textContent = noValues
-    ? `${label}(${period}) has no values yet: it needs ${first} bars and ${have} are loaded, so its line is empty.`
-    : unsettled
-      ? `${label}(${period}) has not settled: ${have} bars loaded, about ${needed} needed for it to forget its starting value. `
-        + 'The last values depend on where this history begins, so another platform with a longer history can show slightly different numbers.'
-      : '';
+  if (have > 0 && have < first) return `${label}(${period}) has no values yet: it needs ${first} bars and ${have} are loaded, so its line is empty.`;
+  if (needed > 0 && have > 0 && have < needed) {
+    return `${label}(${period}) has not settled: ${have} bars loaded, about ${needed} needed for it to forget its starting value. `
+      + 'The last values depend on where this history begins, so another platform with a longer history can show slightly different numbers.';
+  }
+  return null;
+}
+
+function updateSettleNote() {
+  const notes = enabled().map((kind) => [kind, settleNote(kind)]).filter(([, text]) => text);
+  el['settle-note'].hidden = notes.length === 0;
+  el['settle-note'].replaceChildren(...notes.map(([kind, text]) => {
+    const line = document.createElement('div');
+    line.dataset.testid = `settle-note-${kind}`;
+    line.textContent = text;
+    return line;
+  }));
 }
 
 function updateLegend() {
@@ -117,54 +136,66 @@ function updateLegend() {
   el['legend-day'].hidden = !isLive();
   el['day-change'].textContent = formatPercent(change);
   el['day-change'].className = change === null || Math.abs(change) < 0.005 ? '' : change < 0 ? 'down' : 'up';
-  el['legend-label'].textContent = INDICATORS[state.indicator].label;
   const decimalsOf = (key) => state.decimals.lines[key] ?? 2;
-  el['last-sma'].textContent = formatFixed(primaryLine()?.series.data().at(-1)?.value, decimalsOf(primaryLine()?.key));
-  el['legend-bands'].hidden = state.indicator !== 'bb';
-  el['last-bb-upper'].textContent = formatFixed(lineLast('upper')?.value, decimalsOf('upper'));
-  el['last-bb-lower'].textContent = formatFixed(lineLast('lower')?.value, decimalsOf('lower'));
+  const show = (id, key) => { el[id].textContent = formatFixed(lineLast(key)?.value, decimalsOf(key)); };
+  for (const kind of KINDS) el[`legend-${kind}`].hidden = !state.indicators[kind].on;
+  show('last-sma', 'sma');
+  show('last-ema', 'ema');
+  show('last-bb-basis', 'basis');
+  show('last-bb-upper', 'upper');
+  show('last-bb-lower', 'lower');
+  show('last-rsi', 'rsi');
 }
 
 // --- indicator lines -------------------------------------------------------
 function buildLines() {
   for (const l of lines) chart.removeSeries(l.series);
-  const def = INDICATORS[state.indicator];
-  lines = def.lines.map((lineDef) => {
-    const options = { color: lineDef.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: !!lineDef.primary };
-    if (def.pane) {
-      options.autoscaleInfoProvider = () => ({ priceRange: { minValue: 0, maxValue: 100 } });
-    }
-    const series = chart.addSeries(LineSeries, options, def.pane ?? 0);
-    if (def.pane) {
-      for (const price of [30, 70]) series.createPriceLine({ price, color: '#999', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
-      chart.panes()[def.pane]?.setStretchFactor?.(1);
-    }
-    return { key: lineDef.key, def: lineDef, series };
+  lines = enabled().flatMap((kind) => {
+    const def = INDICATORS[kind];
+    return def.lines.map((lineDef) => {
+      const options = { color: lineDef.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: !!lineDef.primary };
+      if (def.pane) {
+        options.autoscaleInfoProvider = () => ({ priceRange: { minValue: 0, maxValue: 100 } });
+      }
+      const series = chart.addSeries(LineSeries, options, def.pane ?? 0);
+      if (def.pane) {
+        for (const price of [30, 70]) series.createPriceLine({ price, color: '#999', lineStyle: 2, lineWidth: 1, axisLabelVisible: false });
+        chart.panes()[def.pane]?.setStretchFactor?.(1);
+      }
+      return { kind, key: lineDef.key, def: lineDef, series };
+    });
   });
 }
 
-// Full redraw: used after any settings or history change.
-// How many decimals the prices and each line need, and the same for the chart's own price scale.
-function applyPrecision(pts) {
+// How many decimals the prices and each indicator need, and the same for the chart's own price scale.
+function applyPrecision(points) {
   const price = priceDecimals(state.candles.map((c) => c.close));
   state.decimals = { price, lines: {} };
   const setFormat = (series, decimals) => series.applyOptions({ priceFormat: { type: 'price', precision: decimals, minMove: 10 ** -decimals } });
   setFormat(candleSeries, price);
-  // all lines of one indicator are read with the same number of decimals (the bands of Bollinger would otherwise differ by one)
-  const decimals = state.indicator === 'rsi' ? 2 : priceDecimals(lines.flatMap((l) => pts[l.key].map((p) => p.value)));
-  for (const l of lines) {
-    state.decimals.lines[l.key] = decimals;
-    setFormat(l.series, decimals);
+  // all lines of one indicator are read with the same number of decimals (the bands of Bollinger would otherwise differ by one);
+  // each indicator has its own, because an RSI (0-100) and a price of 0.00001234 do not need the same
+  for (const kind of enabled()) {
+    const own = lines.filter((l) => l.kind === kind);
+    const decimals = kind === 'rsi' ? 2 : priceDecimals(own.flatMap((l) => points[kind][l.key].map((p) => p.value)));
+    for (const l of own) {
+      state.decimals.lines[l.key] = decimals;
+      setFormat(l.series, decimals);
+    }
   }
 }
 
 // fit: show all bars (new data); false keeps the range the user zoomed to (a changed setting).
 function render({ fit = true } = {}) {
   candleSeries.setData(state.candles);
-  state.indicatorEngine = createIndicatorEngine(state.indicator, state.candles, params(), state.source);
-  const pts = state.indicatorEngine.data();
-  for (const l of lines) l.series.setData(pts[l.key]);
-  applyPrecision(pts);
+  state.engines = {};
+  const points = {};
+  for (const kind of enabled()) {
+    state.engines[kind] = createIndicatorEngine(kind, state.candles, paramsOf(kind), state.indicators[kind].source);
+    points[kind] = state.engines[kind].data();
+  }
+  for (const l of lines) l.series.setData(points[l.kind][l.key]);
+  applyPrecision(points);
   if (fit) chart.timeScale().fitContent();
   updateLegend();
 }
@@ -174,9 +205,10 @@ function paintLast(candle, fullRedraw = false) {
   touch();
   if (fullRedraw) { render({ fit: false }); return; }
   candleSeries.update(candle);
-  const latest = state.indicatorEngine.upsert(candle);
+  const latest = {};
+  for (const kind of enabled()) latest[kind] = state.engines[kind].upsert(candle);
   for (const l of lines) {
-    const point = latest[l.key];
+    const point = latest[l.kind][l.key];
     if (point) l.series.update(point);
   }
   updateLegend();
@@ -206,30 +238,23 @@ function loadScenario(name) {
   touch();
 }
 
-function applyParam(key, value, label) {
+// A changed number of one indicator: checked for that indicator, the others are not touched.
+function applyParam(kind, key, value, label) {
   try {
-    validateParams(state.indicator, { period: state.period, mult: state.mult, start: state.start, [key]: value });
+    validateParams(kind, { ...state.indicators[kind], [key]: value });
   } catch (e) {
-    setStatus(`Invalid ${label}: ${e.message}`, true);
-    if (el[key]) el[key].value = String(state[key]);
+    setStatus(`Invalid ${label} (${INDICATORS[kind].label}): ${e.message}`, true); // which indicator it is about stays at the end
+    if (key === 'period') ctl[kind].period.value = String(state.indicators[kind].period);
+    if (key === 'mult') el.mult.value = String(state.indicators[kind].mult);
     return;
   }
-  state[key] = value;
+  state.indicators[kind][key] = value;
   showStatus();
   render({ fit: false }); // a changed setting keeps the range the user zoomed to
 }
 
-function selectIndicator(kind) {
-  state.indicator = kind;
-  const { defaults } = INDICATORS[kind];
-  state.period = defaults.period;
-  state.mult = defaults.mult ?? state.mult;
-  state.start = defaults.start ?? state.start;
-  el.period.value = String(state.period);
-  el.mult.value = String(state.mult);
-  el['ema-start'].value = state.start;
-  el['start-label'].hidden = kind !== 'ema';
-  el['mult-label'].hidden = kind !== 'bb';
+function setEnabled(kind, on) {
+  state.indicators[kind].on = on;
   buildLines();
   showStatus();
   render({ fit: false });
@@ -537,11 +562,13 @@ function onLiveKline(gen, candle, interval, correction = false, closed = false) 
 }
 
 // --- wiring ----------------------------------------------------------------
-el.indicator.addEventListener('change', () => selectIndicator(el.indicator.value));
-el.source.addEventListener('change', () => { state.source = el.source.value; render({ fit: false }); });
-el.period.addEventListener('input', () => applyParam('period', el.period.valueAsNumber, 'period'));
-el.mult.addEventListener('input', () => applyParam('mult', el.mult.valueAsNumber, 'multiplier'));
-el['ema-start'].addEventListener('change', () => { state.start = el['ema-start'].value; render({ fit: false }); });
+for (const kind of KINDS) {
+  ctl[kind].on.addEventListener('change', () => setEnabled(kind, ctl[kind].on.checked));
+  ctl[kind].source.addEventListener('change', () => { state.indicators[kind].source = ctl[kind].source.value; render({ fit: false }); });
+  ctl[kind].period.addEventListener('input', () => applyParam(kind, 'period', ctl[kind].period.valueAsNumber, 'period'));
+}
+el.mult.addEventListener('input', () => applyParam('bb', 'mult', el.mult.valueAsNumber, 'multiplier'));
+el['ema-start'].addEventListener('change', () => { state.indicators.ema.start = el['ema-start'].value; render({ fit: false }); });
 el.scenario.addEventListener('change', () => loadScenario(el.scenario.value));
 for (const id of ['symbol', 'interval']) el[id].addEventListener('change', () => { if (isLive()) { resetRetry(); loadLive(); } });
 el.start.addEventListener('click', startStream);
@@ -553,11 +580,11 @@ buildLines();
 loadScenario('normal');
 
 // Reads the real chart canvas: where is the line of `key` drawn in the column of its last point, and where should it be?
-function probeLine(key = primaryLine().key) {
+function probeLine(key = primaryLine()?.key) {
   const line = lines.find((l) => l.key === key);
   const last = line?.series.data().at(-1);
   if (!last) return null;
-  const pane = INDICATORS[state.indicator].pane ?? 0;
+  const pane = INDICATORS[line.kind].pane ?? 0;
   const offset = chart.panes().slice(0, pane).reduce((sum, p) => sum + p.getHeight() + 1, 0);
   const x = Math.round(chart.timeScale().timeToCoordinate(last.time)) - 1; // the line ends at the bar centre
   const canvas = chart.takeScreenshot();
@@ -581,15 +608,18 @@ function isLineColor(p, rgb) {
 // Hook for the autotests.
 window.__app = {
   chart, candleSeries, step, stop: stopStream, disconnect, reconnect, sources: SOURCES,
-  get smaSeries() { return primaryLine().series; }, // the main line of the selected indicator
+  get smaSeries() { return primaryLine().series; }, // the main line of the first indicator that is on
   lineSeries: () => Object.fromEntries(lines.map((l) => [l.key, l.series])),
   candleData: () => candleSeries.data(),
   rawCandleData: () => state.candles,
-  smaData: () => primaryLine().series.data(),
+  smaData: () => primaryLine()?.series.data() ?? [],
   lineData: (key) => lines.find((l) => l.key === key)?.series.data() ?? [],
   probeLine,
   state: () => ({
-    indicator: state.indicator, source: state.source, period: state.period, mult: state.mult, start: state.start, scenario: state.scenario,
+    // the first indicator that is on speaks for the old single-indicator fields
+    indicator: enabled()[0] ?? 'sma', source: state.indicators[enabled()[0] ?? 'sma'].source, period: state.indicators[enabled()[0] ?? 'sma'].period,
+    mult: state.indicators.bb.mult, start: state.indicators.ema.start,
+    enabled: enabled(), indicators: JSON.parse(JSON.stringify(state.indicators)), scenario: state.scenario,
     bars: state.candles.length, streaming: stream.timer !== null, offline: isOffline(), ticks: stream.ticks,
     live: isLive() && live.conn !== null, retry: live.retry ? { attempt: live.retry.attempt, delay: live.retry.delay } : null, attempts: live.attempt, rejected: live.rejected, recovered: live.recovered, corrected: live.corrected, resyncs: live.resyncs, symbol: el.symbol.value, interval: el.interval.value,
   }),

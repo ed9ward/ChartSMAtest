@@ -1,4 +1,5 @@
 import { test, expect, open, candleData, probeLine, expectLineAt } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { SOURCES, MAX_PERIOD } from '../../src/sma.js';
 import { settleBars } from '../../src/indicators.js';
 import { priceDecimals } from '../../src/format.js';
@@ -25,9 +26,9 @@ const snapshot = (page) => page.evaluate(() => ({ ...window.__app.state(), candl
 
 async function pick(page, kind, { source, period, scenario } = {}) {
   if (scenario) await page.getByTestId('scenario').selectOption(scenario);
-  await page.getByTestId('indicator').selectOption(kind);
-  if (source) await page.getByTestId('source').selectOption(source);
-  if (period !== undefined) await page.getByTestId('period').fill(String(period));
+  await only(page, kind);
+  if (source) await sourceOf(page).selectOption(source);
+  if (period !== undefined) await periodOf(page).fill(String(period));
 }
 
 async function expectLines(page, kind, candles, params, source) {
@@ -40,10 +41,10 @@ for (const [kind, info] of Object.entries(KINDS)) {
     test('selecting it shows the right label, default period, lines and panes', async ({ page }) => {
       await open(page);
       await pick(page, kind);
-      await expect(page.getByTestId('legend-label')).toHaveText(info.label);
-      await expect(page.getByTestId('period')).toHaveValue(String(info.period));
-      await expect(page.getByTestId('mult')).toBeVisible({ visible: kind === 'bb' });
-      await expect(page.getByTestId('ema-start')).toBeVisible({ visible: kind === 'ema' });
+      await expect(labelOf(page)).toHaveText(info.label);
+      await expect(periodOf(page)).toHaveValue(String(info.period));
+      await expect(page.getByTestId('row-bb').getByTestId('mult')).toBeVisible();          // the extra settings sit in their own rows
+      await expect(page.getByTestId('row-ema').getByTestId('ema-start')).toBeVisible();
       expect(await lineKeys(page)).toEqual(info.keys);
       expect(await paneCount(page)).toBe(info.panes);
       await expect(page.getByTestId('status')).toHaveText('OK');
@@ -70,7 +71,7 @@ for (const [kind, info] of Object.entries(KINDS)) {
       await open(page);
       await pick(page, kind, { source: 'hl2' });
       const want = info.ref(NORMAL, { period: info.period }, 'hl2')[PRIMARY[kind]].at(-1).value;
-      await expect(page.getByTestId('last-sma')).toHaveText(fmt(want));
+      await expect(mainValue(page)).toHaveText(fmt(want));
     });
 
     for (const bad of ['0', '-3', '1.5', '']) {
@@ -78,7 +79,7 @@ for (const [kind, info] of Object.entries(KINDS)) {
         await open(page);
         await pick(page, kind);
         const before = await Promise.all(info.keys.map((k) => lineData(page, k)));
-        await page.getByTestId('period').fill(bad);
+        await periodOf(page).fill(bad);
         await expect(page.getByTestId('status')).toContainText('Invalid period');
         expect(await Promise.all(info.keys.map((k) => lineData(page, k)))).toEqual(before);
       });
@@ -136,13 +137,13 @@ for (const [kind, info] of Object.entries(KINDS)) {
 test('period above the maximum is rejected and the input is restored; the maximum is accepted', async ({ page }) => {
   await open(page);
   const before = await lineData(page, 'sma');
-  await page.getByTestId('period').fill(String(MAX_PERIOD + 1));
+  await periodOf(page).fill(String(MAX_PERIOD + 1));
   await expect(page.getByTestId('status')).toContainText('Invalid period');
-  await expect(page.getByTestId('period')).toHaveValue('20');
+  await expect(periodOf(page)).toHaveValue('20');
   expect(await lineData(page, 'sma')).toEqual(before);
-  await page.getByTestId('period').fill(String(MAX_PERIOD));
+  await periodOf(page).fill(String(MAX_PERIOD));
   await expect(page.getByTestId('status')).toHaveText('OK');
-  await expect(page.getByTestId('period')).toHaveValue(String(MAX_PERIOD));
+  await expect(periodOf(page)).toHaveValue(String(MAX_PERIOD));
   expect(await lineData(page, 'sma')).toEqual([]);
 });
 
@@ -169,7 +170,7 @@ test.describe('EMA start', () => {
         await open(page);
         await pick(page, 'ema');
         await page.getByTestId('ema-start').selectOption(start);
-        await page.getByTestId('period').fill(String(period));
+        await periodOf(page).fill(String(period));
         expectSeriesClose(await lineData(page, 'ema'), refEMA(NORMAL, period, 'close', start));
       });
     }
@@ -194,11 +195,11 @@ test.describe('EMA start', () => {
     await open(page);
     await pick(page, 'ema');
     await page.getByTestId('ema-start').selectOption('sma');
-    await page.getByTestId('period').fill('9');
-    await page.getByTestId('source').selectOption('ohlc4');
+    await periodOf(page).fill('9');
+    await sourceOf(page).selectOption('ohlc4');
     await expect(page.getByTestId('ema-start')).toHaveValue('sma');
     const want = refEMA(NORMAL, 9, 'ohlc4', 'sma').at(-1).value;
-    await expect(page.getByTestId('last-sma')).toHaveText(fmt(want));
+    await expect(mainValue(page)).toHaveText(fmt(want));
   });
 
   test('a long period on a short history: the two starts give clearly different last values', async ({ page }) => {
@@ -212,15 +213,16 @@ test.describe('EMA start', () => {
     expect(sma).toBeCloseTo(refEMA(NORMAL, 40, 'close', 'sma').at(-1).value, 6);
   });
 
-  test('selecting EMA again returns to the default start; other indicators do not show the selector', async ({ page }) => {
+  test('the EMA keeps its start while it is switched off and on again, and the selector is in the EMA row only', async ({ page }) => {
     await open(page);
     await pick(page, 'ema');
     await page.getByTestId('ema-start').selectOption('sma');
     await pick(page, 'sma');
-    await expect(page.getByTestId('ema-start')).toBeHidden();
+    await expect(page.getByTestId('ema-start')).toHaveValue('sma');          // the setting stays with the EMA
     await pick(page, 'ema');
-    await expect(page.getByTestId('ema-start')).toHaveValue('first');
-    expectSeriesClose(await lineData(page, 'ema'), refEMA(NORMAL, 20, 'close', 'first'));
+    await expect(page.getByTestId('ema-start')).toHaveValue('sma');
+    expectSeriesClose(await lineData(page, 'ema'), refEMA(NORMAL, 20, 'close', 'sma'));
+    expect(await page.getByTestId('row-sma').getByTestId('ema-start').count()).toBe(0);
   });
 
   test('strange data works with both starts', async ({ page }) => {
@@ -235,13 +237,17 @@ test.describe('EMA start', () => {
 });
 
 test.describe('Bollinger multiplier', () => {
-  test('visible only for Bollinger Bands', async ({ page }) => {
+  test('the multiplier belongs to the Bollinger row, and is kept while it is switched off and on', async ({ page }) => {
     await open(page);
-    await expect(page.getByTestId('mult')).toBeHidden();
+    await expect(page.getByTestId('row-bb').getByTestId('mult')).toBeVisible();
+    expect(await page.getByTestId('row-rsi').getByTestId('mult').count()).toBe(0);
     await pick(page, 'bb');
-    await expect(page.getByTestId('mult')).toBeVisible();
+    await page.getByTestId('mult').fill('3');
     await pick(page, 'rsi');
-    await expect(page.getByTestId('mult')).toBeHidden();
+    await expect(page.getByTestId('mult')).toHaveValue('3');
+    await pick(page, 'bb');
+    await expect(page.getByTestId('mult')).toHaveValue('3');
+    expectSeriesClose(await lineData(page, 'upper'), refBB(NORMAL, 20, 3, 'close').upper);
   });
 
   test('the band legend is shown only for Bollinger Bands', async ({ page }) => {
@@ -290,14 +296,14 @@ test.describe('Bollinger multiplier', () => {
     await expect(page.getByTestId('last-bb-upper')).toBeVisible();
     await expect(page.getByTestId('last-bb-upper')).toHaveText(fmt(want.upper.at(-1).value));
     await expect(page.getByTestId('last-bb-lower')).toHaveText(fmt(want.lower.at(-1).value));
-    await expect(page.getByTestId('last-sma')).toHaveText(fmt(want.basis.at(-1).value));
+    await expect(mainValue(page)).toHaveText(fmt(want.basis.at(-1).value));
   });
 
   test('the multiplier survives a source change and a live tick', async ({ page }) => {
     await open(page);
     await pick(page, 'bb');
     await page.getByTestId('mult').fill('2.5');
-    await page.getByTestId('source').selectOption('hl2');
+    await sourceOf(page).selectOption('hl2');
     await page.evaluate(() => { window.__app.step(); window.__app.step(); });
     await expectLines(page, 'bb', expectedBars(60, 2), { period: 20, mult: 2.5 }, 'hl2');
   });
@@ -326,14 +332,14 @@ test.describe('RSI pane', () => {
 test.describe('switching indicators', () => {
   test('keeps candles and source, applies the new default period, clears an old error', async ({ page }) => {
     await open(page);
-    await page.getByTestId('source').selectOption('low');
-    await page.getByTestId('period').fill('0');
+    await sourceOf(page).selectOption('low');
+    await periodOf(page).fill('0');
     await expect(page.getByTestId('status')).toContainText('Invalid period');
     const candlesBefore = await candleData(page);
     await pick(page, 'rsi');
     await expect(page.getByTestId('status')).toHaveText('OK');
-    await expect(page.getByTestId('period')).toHaveValue('14');
-    await expect(page.getByTestId('source')).toHaveValue('low');
+    await expect(periodOf(page)).toHaveValue('14');
+    await expect(sourceOf(page)).toHaveValue('low');
     expect(await candleData(page)).toEqual(candlesBefore);
     await expectLines(page, 'rsi', NORMAL, { period: 14 }, 'low');
   });
@@ -345,7 +351,7 @@ test.describe('switching indicators', () => {
     let kind = 'sma';
     for (let i = 0; i < 60; i++) {
       kind = kinds[Math.floor(rnd() * kinds.length)];
-      await page.getByTestId('indicator').selectOption(kind);
+      await only(page, kind);
       if (i % 7 === 0) await page.evaluate(() => window.__app.step());
     }
     expect(await lineKeys(page)).toEqual(KINDS[kind].keys);
@@ -396,7 +402,7 @@ test.describe('what a trader reads: prices of any size, and the zoom', () => {
       await pick(page, kind);
       expect(await precision(page, 'line')).toBe(8);
       const want = (await lineData(page, kind)).at(-1).value.toFixed(8);
-      await expect(page.getByTestId('last-sma')).toHaveText(want);
+      await expect(mainValue(page)).toHaveText(want);
       expect(want).not.toBe('0.00000000');
     }
     await pick(page, 'bb');
@@ -411,7 +417,7 @@ test.describe('what a trader reads: prices of any size, and the zoom', () => {
     await page.getByTestId('scenario').selectOption('tiny');
     await pick(page, 'rsi');
     expect(await precision(page, 'line')).toBe(2);
-    await expect(page.getByTestId('last-sma')).toHaveText(/^\d+\.\d{2}$/);
+    await expect(mainValue(page)).toHaveText(/^\d+\.\d{2}$/);
     await pick(page, 'sma', { source: 'volume' }); // volumes are 10s, whatever the price
     expect(await precision(page, 'line')).toBe(2);
   });
@@ -455,9 +461,9 @@ test.describe('what a trader reads: prices of any size, and the zoom', () => {
       expect(Math.abs(now.from - zoomed.from), label).toBeLessThan(0.1);
       expect(Math.abs(now.to - zoomed.to), label).toBeLessThan(0.1);
     };
-    await page.getByTestId('source').selectOption('hl2');
+    await sourceOf(page).selectOption('hl2');
     await same('source');
-    await page.getByTestId('period').fill('9');
+    await periodOf(page).fill('9');
     await same('period');
     await pick(page, 'ema');
     await same('indicator');
@@ -516,14 +522,14 @@ test.describe('the note about indicators that have not settled', () => {
     await open(page);
     await pick(page, 'sma', { period: 200 });
     await expect(note(page)).toHaveText('SMA(200) has no values yet: it needs 200 bars and 60 are loaded, so its line is empty.');
-    await expect(page.getByTestId('last-sma')).toHaveText('—');
+    await expect(mainValue(page)).toHaveText('—');
     await pick(page, 'bb', { period: 61 });
     await expect(note(page)).toContainText('BB(61) has no values yet: it needs 61 bars and 60 are loaded');
     await pick(page, 'rsi', { period: 60 });
     await expect(note(page)).toContainText('RSI(60) has no values yet: it needs 61 bars');
     await pick(page, 'sma', { period: 60 });             // exactly enough: one value, no note
     await expect(note(page)).toBeHidden();
-    await expect(page.getByTestId('last-sma')).not.toHaveText('—');
+    await expect(mainValue(page)).not.toHaveText('—');
   });
 
   test('the EMA with the first-value start has a value from the first bar; with the SMA start it waits for a full window', async ({ page }) => {
@@ -541,7 +547,7 @@ test.describe('the note about indicators that have not settled', () => {
     await page.evaluate(() => { for (let i = 0; i < 6; i++) window.__app.step(); }); // 5 ticks per bar: the 1st opens bar 61, the 6th opens bar 62
     await expect(page.getByTestId('bar-count')).toHaveText('62');
     await expect(note(page)).toBeHidden();
-    await expect(page.getByTestId('last-sma')).not.toHaveText('—');
+    await expect(mainValue(page)).not.toHaveText('—');
   });
 
   test('the time axis says that it is in UTC', async ({ page }) => {
@@ -552,11 +558,11 @@ test.describe('the note about indicators that have not settled', () => {
   test('changing the period updates it: a short EMA is settled, a long one is not', async ({ page }) => {
     await open(page);
     await pick(page, 'ema');
-    await page.getByTestId('period').fill('5');
+    await periodOf(page).fill('5');
     await expect(note(page)).toBeHidden();      // needs 18 bars, there are 60
-    await page.getByTestId('period').fill('40');
+    await periodOf(page).fill('40');
     await expect(note(page)).toContainText(`EMA(40) has not settled: 60 bars loaded, about ${settleBars('ema', 40)} needed`);
-    await page.getByTestId('period').fill('0');  // an invalid period keeps the old one, and the note with it
+    await periodOf(page).fill('0');  // an invalid period keeps the old one, and the note with it
     await expect(note(page)).toContainText('EMA(40)');
   });
 
@@ -573,7 +579,7 @@ test.describe('the note about indicators that have not settled', () => {
     await pick(page, 'ema', { scenario: 'long', period: 200 });
     await expect(page.getByTestId('bar-count')).toHaveText('2000');
     await expect(note(page)).toBeHidden();        // 692 needed
-    await page.getByTestId('period').fill('1000');
+    await periodOf(page).fill('1000');
     await expect(note(page)).toContainText(`EMA(1000) has not settled: 2000 bars loaded, about ${settleBars('ema', 1000)} needed`);
   });
 
@@ -620,7 +626,7 @@ test.describe('flat and stalled markets', () => {
         expect(data.every((p) => p.value === 100), `${kind}/${key}`).toBe(true);
       }
     }
-    await expect(page.getByTestId('last-sma')).toHaveText('100.00');
+    await expect(mainValue(page)).toHaveText('100.00');
   });
 
   test('a flat market with the SMA start of the EMA, and with a short and a long RSI period', async ({ page }) => {
@@ -651,7 +657,7 @@ test.describe('flat and stalled markets', () => {
     for (const p of after) expect(p.value).toBeCloseTo(atStop, 9);
     expect(atStop).toBeGreaterThan(50);
     expect(atStop).toBeLessThan(100);
-    await expect(page.getByTestId('last-sma')).toHaveText(atStop.toFixed(2));
+    await expect(mainValue(page)).toHaveText(atStop.toFixed(2));
   });
 
   test('a stalled market: the other indicators settle on the final price', async ({ page }) => {

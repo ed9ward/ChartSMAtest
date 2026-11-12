@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect, open, smaData, candleData, expectLineAt } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { refSMA, refEMA, refBB, refRSI, expectSeriesClose } from '../unit/helpers.js';
 
 // Real BTCUSDT 1m klines saved from Binance. Only the network is replaced; parsing, SMA and drawing are real.
@@ -91,7 +92,7 @@ test.describe('history', () => {
     expectSeriesClose(await smaData(page), refSMA(CANDLES, 20, 'close'));
     // golden values were calculated outside JavaScript
     await expect(page.getByTestId('last-close')).toHaveText('73488.00');
-    await expect(page.getByTestId('last-sma')).toHaveText('73310.66');
+    await expect(mainValue(page)).toHaveText('73310.66');
     expect(mock.requests[0].search).toBe('?symbol=BTCUSDT&interval=1m&limit=1000'); // the most Binance gives: EMA and RSI settle better
     expect(mock.sockets[0].url).toContain('btcusdt@kline_1m');
   });
@@ -99,15 +100,15 @@ test.describe('history', () => {
   test('settings on real data: hl2 / 10 and ohlc4 / 20 match golden values', async ({ page }) => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
-    await page.getByTestId('source').selectOption('hl2');
-    await page.getByTestId('period').fill('10');
-    await expect(page.getByTestId('last-sma')).toHaveText('73350.43');
-    await page.getByTestId('source').selectOption('ohlc4');
-    await page.getByTestId('period').fill('20');
-    await expect(page.getByTestId('last-sma')).toHaveText('73305.95');
-    await page.getByTestId('source').selectOption('volume');
-    await page.getByTestId('period').fill('10');
-    await expect(page.getByTestId('last-sma')).toHaveText('15.74');
+    await sourceOf(page).selectOption('hl2');
+    await periodOf(page).fill('10');
+    await expect(mainValue(page)).toHaveText('73350.43');
+    await sourceOf(page).selectOption('ohlc4');
+    await periodOf(page).fill('20');
+    await expect(mainValue(page)).toHaveText('73305.95');
+    await sourceOf(page).selectOption('volume');
+    await periodOf(page).fill('10');
+    await expect(mainValue(page)).toHaveText('15.74');
   });
 
   test('SMA line is drawn at the right height on real prices', async ({ page }) => {
@@ -194,8 +195,8 @@ test.describe('live updates', () => {
   test('settings can be changed while live data keeps arriving', async ({ page }) => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
-    await page.getByTestId('source').selectOption('hlc3');
-    await page.getByTestId('period').fill('7');
+    await sourceOf(page).selectOption('hlc3');
+    await periodOf(page).fill('7');
     mock.sockets[0].ws.send(klineMsg({ t: T0 + 60000, o: 73488, h: 73600, l: 73400, c: 73550 }));
     await expect(page.getByTestId('bar-count')).toHaveText('51');
     const expected = [...CANDLES, { time: T0 / 1000 + 60, open: 73488, high: 73600, low: 73400, close: 73550, volume: 1 }];
@@ -339,9 +340,9 @@ test.describe('connection problems', () => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
     await page.getByTestId('disconnect').click();
-    await page.getByTestId('period').fill('5');
+    await periodOf(page).fill('5');
     await expect(page.getByTestId('status')).toHaveText('Feed disconnected');
-    await expect(page.getByTestId('last-sma')).toHaveText('73419.49');
+    await expect(mainValue(page)).toHaveText('73419.49');
   });
 
   test('HTTP 500: keeps the chart disconnected and schedules an automatic retry', async ({ page, errors }) => {
@@ -462,43 +463,43 @@ test.describe('other indicators on real data', () => {
   // Golden values calculated outside JavaScript (Python, Decimal) from the same 50 bars.
   test('EMA 20 and 5 (first value as start, the default)', async ({ page }) => {
     await goLive(page, await mockBinance(page));
-    await page.getByTestId('indicator').selectOption('ema');
-    await expect(page.getByTestId('last-sma')).toHaveText('73342.91');
-    await page.getByTestId('period').fill('5');
-    await expect(page.getByTestId('last-sma')).toHaveText('73429.15');
+    await only(page, 'ema');
+    await expect(mainValue(page)).toHaveText('73342.91');
+    await periodOf(page).fill('5');
+    await expect(mainValue(page)).toHaveText('73429.15');
   });
 
   test('EMA with the SMA start (TA-Lib) differs by 3.33 dollars at period 20 and not at period 5', async ({ page }) => {
     await goLive(page, await mockBinance(page));
-    await page.getByTestId('indicator').selectOption('ema');
+    await only(page, 'ema');
     await page.getByTestId('ema-start').selectOption('sma');
-    await expect(page.getByTestId('last-sma')).toHaveText('73346.25');
-    await page.getByTestId('period').fill('5');
-    await expect(page.getByTestId('last-sma')).toHaveText('73429.15');
+    await expect(mainValue(page)).toHaveText('73346.25');
+    await periodOf(page).fill('5');
+    await expect(mainValue(page)).toHaveText('73429.15');
     await page.getByTestId('ema-start').selectOption('first');
-    await page.getByTestId('period').fill('20');
-    await expect(page.getByTestId('last-sma')).toHaveText('73342.91');
+    await periodOf(page).fill('20');
+    await expect(mainValue(page)).toHaveText('73342.91');
   });
 
   test('Bollinger (20, 2) and (10, 3)', async ({ page }) => {
     await goLive(page, await mockBinance(page));
-    await page.getByTestId('indicator').selectOption('bb');
+    await only(page, 'bb');
     await expect(page.getByTestId('last-bb-upper')).toHaveText('73476.76');
-    await expect(page.getByTestId('last-sma')).toHaveText('73310.66');
+    await expect(mainValue(page)).toHaveText('73310.66');
     await expect(page.getByTestId('last-bb-lower')).toHaveText('73144.57');
-    await page.getByTestId('period').fill('10');
+    await periodOf(page).fill('10');
     await page.getByTestId('mult').fill('3');
     await expect(page.getByTestId('last-bb-upper')).toHaveText('73589.62');
-    await expect(page.getByTestId('last-sma')).toHaveText('73361.73');
+    await expect(mainValue(page)).toHaveText('73361.73');
     await expect(page.getByTestId('last-bb-lower')).toHaveText('73133.83');
   });
 
   test('RSI 14 and 5', async ({ page }) => {
     await goLive(page, await mockBinance(page));
-    await page.getByTestId('indicator').selectOption('rsi');
-    await expect(page.getByTestId('last-sma')).toHaveText('57.94');
-    await page.getByTestId('period').fill('5');
-    await expect(page.getByTestId('last-sma')).toHaveText('77.71');
+    await only(page, 'rsi');
+    await expect(mainValue(page)).toHaveText('57.94');
+    await periodOf(page).fill('5');
+    await expect(mainValue(page)).toHaveText('77.71');
   });
 
   test('a closed Binance kline cannot be overwritten by a stale forming update', async ({ page }) => {
@@ -523,7 +524,7 @@ test.describe('other indicators on real data', () => {
       ['rsi', 14, (c) => ({ rsi: refRSI(c, 14, 'close') })],
     ];
     for (const [kind, , ref] of cases) {
-      await page.getByTestId('indicator').selectOption(kind);
+      await only(page, kind);
       const want = ref(expected);
       for (const [key, points] of Object.entries(want)) {
         expectSeriesClose(await page.evaluate((k) => window.__app.lineData(k), key), points);
@@ -710,9 +711,9 @@ test.describe('lost and repeated live messages', () => {
     ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73400, c: 73450, v: 9 })); // ... the next one carries both, and the volume so far
     await expect(page.getByTestId('last-close')).toHaveText('73450.00');
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0 / 1000, open: 73484, high: 73600, low: 73400, close: 73450 });
-    await page.getByTestId('source').selectOption('volume');
-    await page.getByTestId('period').fill('1');
-    await expect(page.getByTestId('last-sma')).toHaveText('9.00');
+    await sourceOf(page).selectOption('volume');
+    await periodOf(page).fill('1');
+    await expect(mainValue(page)).toHaveText('9.00');
   });
 
   test('a lost message that opens a new bar: the next message of that bar is enough', async ({ page }) => {
@@ -805,12 +806,12 @@ test.describe('impossible candles', () => {
   test('impossible candles never reach the indicators: volume source stays correct', async ({ page }) => {
     const mock = await mockBinance(page);
     await goLive(page, mock);
-    await page.getByTestId('source').selectOption('volume');
-    await page.getByTestId('period').fill('1');
+    await sourceOf(page).selectOption('volume');
+    await periodOf(page).fill('1');
     const ws = mock.sockets[0].ws;
     ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: -1000 }));
     ws.send(klineMsg({ t: T0, o: 73484, h: 73600, l: 73480, c: 73500, v: 7 }));
-    await expect(page.getByTestId('last-sma')).toHaveText('7.00');
+    await expect(mainValue(page)).toHaveText('7.00');
   });
 });
 
@@ -830,7 +831,7 @@ test.describe('a cheap coin through the exchange path', () => {
     expect(await page.evaluate(() => window.__app.candleSeries.options().priceFormat.precision)).toBe(8);
     mock.sockets[0].ws.send(klineMsg({ t: T0, o: 0.0000125, h: 0.0000126, l: 0.0000124, c: 0.00001256, v: 3 }));
     await expect(page.getByTestId('last-close')).toHaveText('0.00001256');
-    await page.getByTestId('indicator').selectOption('bb');
+    await only(page, 'bb');
     const upper = (await page.evaluate(() => window.__app.lineData('upper'))).at(-1).value;
     await expect(page.getByTestId('last-bb-upper')).toHaveText(upper.toFixed(8));
   });
@@ -1047,12 +1048,12 @@ test.describe('automatic reconnect and the silence watchdog', () => {
     await page.clock.install({ time: NOW });
     const mock = await mockBinance(page);
     await goLive(page, mock);
-    await page.getByTestId('indicator').selectOption('ema');
+    await only(page, 'ema');
     mock.sockets[0].ws.close();
     await page.clock.fastForward(1000);
     await expect.poll(() => mock.sockets.length).toBe(2);
     await expect(page.getByTestId('bar-count')).toHaveText('50');
-    await expect(page.getByTestId('legend-label')).toHaveText('EMA');
+    await expect(labelOf(page)).toHaveText('EMA');
     expect(await page.evaluate(() => window.__app.state().indicator)).toBe('ema');
   });
 });

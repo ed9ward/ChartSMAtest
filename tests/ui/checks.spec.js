@@ -208,7 +208,7 @@ test.describe('self-checks page', () => {
     await runAndWait(page);
     const frame = page.frameLocator('#app');
     await expect(frame.getByTestId('scenario')).toHaveValue('normal');
-    await expect(frame.getByTestId('indicator')).toHaveValue('sma');
+    for (const kind of ['sma', 'ema', 'bb', 'rsi']) await expect(frame.getByTestId(`ind-${kind}`)).toBeChecked({ checked: kind === 'sma' }); // only the SMA is on, as at the start
     await expect(frame.getByTestId('bar-count')).toHaveText('60');
   });
 

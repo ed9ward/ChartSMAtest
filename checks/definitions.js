@@ -234,7 +234,7 @@ function uiChecks(kind, ctx) {
   for (const period of [3, 10]) {
     add(`chart: period ${period} matches the reference`, () => {
       ui().setup({ indicator: kind });
-      ui().type('period', period);
+      ui().type(`period-${kind}`, period);
       matchChart(NORMAL, { ...defaults, period }, 'close');
     });
   }
@@ -255,7 +255,7 @@ function uiChecks(kind, ctx) {
   add('chart: invalid period shows an error and keeps the lines', () => {
     ui().setup({ indicator: kind });
     const before = snapshot();
-    ui().type('period', 0);
+    ui().type(`period-${kind}`, 0);
     assert(/Invalid period/.test(ui().text('status')), `status is "${ui().text('status')}"`);
     equal(snapshot(), before);
   });
@@ -271,8 +271,9 @@ function uiChecks(kind, ctx) {
   add('legend shows the last value of the main line', () => {
     ui().setup({ indicator: kind });
     const want = REFERENCE[kind](NORMAL, defaults, 'close')[def.lines.find((l) => l.primary).key].at(-1).value;
-    equal(ui().text('last-sma'), want.toFixed(2));
-    equal(ui().text('legend-label'), def.label);
+    const legendId = { sma: 'last-sma', ema: 'last-ema', bb: 'last-bb-basis', rsi: 'last-rsi' }[kind];
+    equal(ui().text(legendId), want.toFixed(2));
+    equal(ui().text(`legend-label-${kind}`), def.label);
   });
   add('every line is drawn at the right height on the canvas', async () => {
     ui().setup({ indicator: kind });

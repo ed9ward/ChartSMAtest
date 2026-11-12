@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect, open, smaData, candleData, expectLineAt } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { refSMA, refEMA, refBB, refRSI, expectSeriesClose } from '../unit/helpers.js';
 
 // The 50 real BTCUSDT bars, reshaped like Coinbase's API: [time s, low, high, open, close, volume], newest first.
@@ -170,14 +171,14 @@ test.describe('Coinbase history', () => {
     expect((await candleData(page)).map(ohlc)).toEqual(CANDLES.map(ohlc));
     expectSeriesClose(await smaData(page), refSMA(CANDLES, 20, 'close'));
     await expect(page.getByTestId('last-close')).toHaveText('73488.00');
-    await expect(page.getByTestId('last-sma')).toHaveText('73310.66');
-    await page.getByTestId('indicator').selectOption('ema');
-    await expect(page.getByTestId('last-sma')).toHaveText('73342.91'); // first value as start
-    await page.getByTestId('indicator').selectOption('bb');
+    await expect(mainValue(page)).toHaveText('73310.66');
+    await only(page, 'ema');
+    await expect(mainValue(page)).toHaveText('73342.91'); // first value as start
+    await only(page, 'bb');
     await expect(page.getByTestId('last-bb-upper')).toHaveText('73476.76');
     await expect(page.getByTestId('last-bb-lower')).toHaveText('73144.57');
-    await page.getByTestId('indicator').selectOption('rsi');
-    await expect(page.getByTestId('last-sma')).toHaveText('57.94');
+    await only(page, 'rsi');
+    await expect(mainValue(page)).toHaveText('57.94');
   });
 
   test('the requests and the subscription are the ones Coinbase expects', async ({ page }) => {
@@ -224,13 +225,13 @@ test.describe('Coinbase history is limited to 300 candles', () => {
     const mock = await mockCoinbase(page, () => ({ body: rows300 }));
     await goLive(page, mock);
     await expect(page.getByTestId('bar-count')).toHaveText('300');
-    await page.getByTestId('indicator').selectOption('ema');
-    await page.getByTestId('period').fill('200');
+    await only(page, 'ema');
+    await periodOf(page).fill('200');
     await expect(page.getByTestId('settle-note')).toContainText('EMA(200) has not settled: 300 bars loaded, about 692 needed');
-    await page.getByTestId('period').fill('20');
+    await periodOf(page).fill('20');
     await expect(page.getByTestId('settle-note')).toBeHidden();
-    await page.getByTestId('indicator').selectOption('sma');
-    await page.getByTestId('period').fill('200');
+    await only(page, 'sma');
+    await periodOf(page).fill('200');
     await expect(page.getByTestId('settle-note')).toBeHidden();
   });
 
@@ -272,9 +273,9 @@ test.describe('Coinbase live trades', () => {
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0, open: 73484, high: 73500, low: 73482, close: 73500 });
     const expected = CANDLES.map((c, i) => (i === CANDLES.length - 1 ? { ...c, high: 73500, close: 73500, volume: c.volume + 0.5 } : c));
     expectSeriesClose(await smaData(page), refSMA(expected, 20, 'close'));
-    await page.getByTestId('source').selectOption('volume'); // volume continued from the history bar: 1.02338 + 0.5
-    await page.getByTestId('period').fill('1');
-    await expect(page.getByTestId('last-sma')).toHaveText('1.52');
+    await sourceOf(page).selectOption('volume'); // volume continued from the history bar: 1.02338 + 0.5
+    await periodOf(page).fill('1');
+    await expect(mainValue(page)).toHaveText('1.52');
   });
 
   test('a trade at a lower price moves the low', async ({ page }) => {
@@ -317,12 +318,12 @@ test.describe('Coinbase live trades', () => {
     await expect(page.getByTestId('last-close')).toHaveText(fmt(price));
     expect((await candleData(page)).map(ohlc)).toEqual(bars.map(ohlc));
     expectSeriesClose(await smaData(page), refSMA(bars, 20, 'close'));
-    await page.getByTestId('indicator').selectOption('ema');
+    await only(page, 'ema');
     expectSeriesClose(await lineData(page, 'ema'), refEMA(bars, 20, 'close'));
-    await page.getByTestId('indicator').selectOption('bb');
+    await only(page, 'bb');
     const bb = refBB(bars, 20, 2, 'close');
     for (const key of ['upper', 'basis', 'lower']) expectSeriesClose(await lineData(page, key), bb[key]);
-    await page.getByTestId('indicator').selectOption('rsi');
+    await only(page, 'rsi');
     expectSeriesClose(await lineData(page, 'rsi'), refRSI(bars, 14, 'close'));
     await expect(status(page)).toHaveText('Live BTC-USD 1m'); // an orderly feed leaves no traces
     expect(mock.tradeRequests).toHaveLength(1);
@@ -395,9 +396,9 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     expect(mock.tradeRequests).toHaveLength(2);
     expect(mock.tradeRequests[1].search).toBe('?limit=1000&before=1001');
     expect(ohlc((await candleData(page)).at(-1))).toEqual({ time: T0, open: 73484, high: 73600, low: 73482, close: 73495 });
-    await page.getByTestId('source').selectOption('volume');
-    await page.getByTestId('period').fill('1');
-    await expect(page.getByTestId('last-sma')).toHaveText((1.02338 + 0.2 + 3 + 0.1).toFixed(2)); // nothing missing in the volume
+    await sourceOf(page).selectOption('volume');
+    await periodOf(page).fill('1');
+    await expect(mainValue(page)).toHaveText((1.02338 + 0.2 + 3 + 0.1).toFixed(2)); // nothing missing in the volume
   });
 
   test('several lost trades in a row are all recovered', async ({ page }) => {
@@ -419,9 +420,9 @@ test.describe('Coinbase lost, repeated and reordered messages', () => {
     t.again(0, trade);
     t.again(0, trade);
     await expect(status(page)).toHaveText('Live BTC-USD 1m; ignored 2 duplicate message(s)');
-    await page.getByTestId('source').selectOption('volume');
-    await page.getByTestId('period').fill('1');
-    await expect(page.getByTestId('last-sma')).toHaveText((1.02338 + 2).toFixed(2));
+    await sourceOf(page).selectOption('volume');
+    await periodOf(page).fill('1');
+    await expect(mainValue(page)).toHaveText((1.02338 + 2).toFixed(2));
     expect(mock.tradeRequests).toHaveLength(1);
   });
 

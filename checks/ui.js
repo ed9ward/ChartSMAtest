@@ -1,3 +1,4 @@
+import { INDICATORS } from '../src/indicators.js';
 // Drives the real page (index.html in an iframe) the way a user would: sets controls, reads what the chart holds.
 import { assert } from './assert.js';
 
@@ -45,11 +46,19 @@ export function createUiDriver(frame) {
       }
       assert(problem === null, problem === null ? '' : String(problem) || 'the check did not pass');
     },
-    // Fresh state: demo data set (resets the feed), then indicator (sets its default period), then source.
+    // Fresh state: the data set (resets the feed), then only `indicator` switched on, every indicator back at its defaults,
+    // then the source of `indicator`. The same clicks and typing a person would do.
     setup({ indicator = 'sma', source = 'close', scenario = 'normal' } = {}) {
       driver.select('scenario', scenario);
-      driver.select('indicator', indicator);
-      driver.select('source', source);
+      for (const kind of Object.keys(INDICATORS)) {
+        const box = driver.el(`ind-${kind}`);
+        if (box.checked !== (kind === indicator)) { box.checked = kind === indicator; box.dispatchEvent(new (win().Event)('change')); }
+        driver.type(`period-${kind}`, INDICATORS[kind].defaults.period);
+        driver.select(`source-${kind}`, 'close');
+      }
+      driver.type('mult', 2);
+      driver.select('ema-start', 'first');
+      driver.select(`source-${indicator}`, source);
     },
   };
   return driver;

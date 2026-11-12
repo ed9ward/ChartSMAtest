@@ -1,4 +1,5 @@
 import { test, expect, open, smaData, candleData, text, probeSmaLine, expectLineAt } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
 import { sanitizeCandles } from '../../src/sanitize.js';
@@ -29,7 +30,7 @@ test.describe('SMA settings rebuild the line', () => {
   for (const source of SOURCES) {
     test(`source ${source} matches the reference`, async ({ page }) => {
       await open(page);
-      await page.getByTestId('source').selectOption(source);
+      await sourceOf(page).selectOption(source);
       expectSeriesClose(await smaData(page), refSMA(normal, 20, source));
     });
   }
@@ -37,7 +38,7 @@ test.describe('SMA settings rebuild the line', () => {
   for (const period of [1, 5, 20, 59, 60, 61]) {
     test(`period ${period} matches the reference`, async ({ page }) => {
       await open(page);
-      await page.getByTestId('period').fill(String(period));
+      await periodOf(page).fill(String(period));
       const expected = period > 60 ? [] : refSMA(normal, period, 'close');
       expectSeriesClose(await smaData(page), expected);
       await expect(page.getByTestId('status')).toHaveText('OK');
@@ -46,8 +47,8 @@ test.describe('SMA settings rebuild the line', () => {
 
   test('changing source and period together', async ({ page }) => {
     await open(page);
-    await page.getByTestId('source').selectOption('ohlc4');
-    await page.getByTestId('period').fill('7');
+    await sourceOf(page).selectOption('ohlc4');
+    await periodOf(page).fill('7');
     expectSeriesClose(await smaData(page), refSMA(normal, 7, 'ohlc4'));
   });
 
@@ -55,7 +56,7 @@ test.describe('SMA settings rebuild the line', () => {
     test(`invalid period "${bad}" shows an error and keeps the old line`, async ({ page }) => {
       await open(page);
       const before = await smaData(page);
-      await page.getByTestId('period').fill(bad);
+      await periodOf(page).fill(bad);
       await expect(page.getByTestId('status')).toContainText('Invalid period');
       expect(await smaData(page)).toEqual(before);
     });
@@ -66,14 +67,14 @@ test.describe('price display', () => {
   test('legend shows the last close and last SMA', async ({ page }) => {
     await open(page);
     await expect(page.getByTestId('last-close')).toHaveText(fmt(normal.at(-1).close));
-    await expect(page.getByTestId('last-sma')).toHaveText(fmt(refSMA(normal, 20, 'close').at(-1).value));
+    await expect(mainValue(page)).toHaveText(fmt(refSMA(normal, 20, 'close').at(-1).value));
   });
 
   test('legend SMA follows the settings', async ({ page }) => {
     await open(page);
-    await page.getByTestId('source').selectOption('volume');
-    await page.getByTestId('period').fill('10');
-    await expect(page.getByTestId('last-sma')).toHaveText(fmt(refSMA(normal, 10, 'volume').at(-1).value));
+    await sourceOf(page).selectOption('volume');
+    await periodOf(page).fill('10');
+    await expect(mainValue(page)).toHaveText(fmt(refSMA(normal, 10, 'volume').at(-1).value));
   });
 });
 
@@ -87,7 +88,7 @@ test.describe('visual check on the real canvas', () => {
     await open(page);
     await expectLineAt(page);
     const a = await probeSmaLine(page);
-    await page.getByTestId('source').selectOption('low');
+    await sourceOf(page).selectOption('low');
     await expectLineAt(page);
     const b = await probeSmaLine(page);
     const mean = (ys) => ys.reduce((x, y) => x + y, 0) / ys.length;
@@ -125,13 +126,13 @@ test.describe('realtime updates', () => {
   for (const steps of [1, 2, 3, 5, 6, 12]) {
     test(`SMA is correct after ${steps} ticks`, async ({ page }) => {
       await open(page);
-      await page.getByTestId('source').selectOption('hlc3');
-      await page.getByTestId('period').fill('10');
+      await sourceOf(page).selectOption('hlc3');
+      await periodOf(page).fill('10');
       for (let i = 0; i < steps; i++) await page.evaluate(() => window.__app.step());
       const bars = expectedAfter(steps);
       expectSeriesClose(await smaData(page), refSMA(bars, 10, 'hlc3'));
       expect((await candleData(page)).at(-1).close).toBeCloseTo(bars.at(-1).close, 6);
-      await expect(page.getByTestId('last-sma')).toHaveText(fmt(refSMA(bars, 10, 'hlc3').at(-1).value));
+      await expect(mainValue(page)).toHaveText(fmt(refSMA(bars, 10, 'hlc3').at(-1).value));
     });
   }
 
@@ -201,7 +202,7 @@ test.describe('strange data', () => {
     await open(page);
     await page.getByTestId('scenario').selectOption('empty');
     await expect(page.getByTestId('last-close')).toHaveText('—');
-    await expect(page.getByTestId('last-sma')).toHaveText('—');
+    await expect(mainValue(page)).toHaveText('—');
     await page.getByTestId('scenario').selectOption('normal');
     await expect(page.getByTestId('bar-count')).toHaveText('60');
     expect(await smaData(page)).toHaveLength(41);
@@ -217,6 +218,6 @@ test.describe('the tests really catch a broken SMA', () => {
 
   test('injected bug is detected by the legend check', async ({ page }) => {
     await open(page, '?bug=offbyone');
-    await expect(page.getByTestId('last-sma')).not.toHaveText(fmt(refSMA(normal, 20, 'close').at(-1).value));
+    await expect(mainValue(page)).not.toHaveText(fmt(refSMA(normal, 20, 'close').at(-1).value));
   });
 });

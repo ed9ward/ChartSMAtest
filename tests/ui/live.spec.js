@@ -1,4 +1,5 @@
 import { test, expect, open, smaData, candleData, expectLineAt } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { mulberry32 } from '../../src/generator.js';
 import { SOURCES } from '../../src/sma.js';
 import { SCENARIOS } from '../../src/scenarios.js';
@@ -18,11 +19,11 @@ function runOps(page, ops) {
     for (const op of list) {
       if (op.type === 'step') window.__app.step();
       else if (op.type === 'source') {
-        const sel = document.getElementById('source');
+        const sel = document.getElementById('source-sma');
         sel.value = op.value;
         sel.dispatchEvent(new Event('change'));
       } else {
-        const inp = document.getElementById('period');
+        const inp = document.getElementById('period-sma');
         inp.value = String(op.value);
         inp.dispatchEvent(new Event('input'));
       }
@@ -103,8 +104,8 @@ test.describe('feed connection lost and restored', () => {
     await open(page);
     await page.getByTestId('start').click();
     await page.getByTestId('disconnect').click();
-    await page.getByTestId('source').selectOption('hl2');
-    await page.getByTestId('period').fill('8');
+    await sourceOf(page).selectOption('hl2');
+    await periodOf(page).fill('8');
     await page.evaluate(() => { window.__app.reconnect(17); window.__app.stop(); });
     const after = await snapshot(page);
     expectSeriesClose(after.sma, refSMA(expectedBars(60, after.ticks), 8, 'hl2'));
@@ -173,11 +174,11 @@ test.describe('settings changed while streaming', () => {
     await open(page);
     await page.getByTestId('start').click();
     for (let i = 0; i < 25; i++) {
-      await page.getByTestId('source').selectOption(SOURCES[i % SOURCES.length]);
-      await page.getByTestId('period').fill(String(1 + ((i * 7) % 30)));
+      await sourceOf(page).selectOption(SOURCES[i % SOURCES.length]);
+      await periodOf(page).fill(String(1 + ((i * 7) % 30)));
     }
-    await page.getByTestId('source').selectOption('hlc3');
-    await page.getByTestId('period').fill('12');
+    await sourceOf(page).selectOption('hlc3');
+    await periodOf(page).fill('12');
     await page.getByTestId('stop').click();
     const snap = await snapshot(page);
     const bars = expectedBars(60, snap.ticks);
@@ -205,15 +206,15 @@ test.describe('first candle of an empty chart', () => {
     await page.evaluate(() => window.__app.step());
     await expect(page.getByTestId('bar-count')).toHaveText('1');
     expect(await smaData(page)).toEqual([]);
-    await expect(page.getByTestId('last-sma')).toHaveText('—');
+    await expect(mainValue(page)).toHaveText('—');
     await expect(page.getByTestId('last-close')).toHaveText(fmt(expectedBars(0, 1)[0].close));
   });
 
   test('with period 1 the SMA equals the source from the very first tick', async ({ page }) => {
     await open(page);
     await page.getByTestId('scenario').selectOption('empty');
-    await page.getByTestId('period').fill('1');
-    await page.getByTestId('source').selectOption('ohlc4');
+    await periodOf(page).fill('1');
+    await sourceOf(page).selectOption('ohlc4');
     for (let steps = 1; steps <= 12; steps++) {
       await page.evaluate(() => window.__app.step());
       const bars = expectedBars(0, steps);
@@ -282,9 +283,9 @@ test.describe('2000 bars', () => {
     await open(page);
     await page.getByTestId('scenario').selectOption('long');
     await expect(page.getByTestId('bar-count')).toHaveText('2000');
-    await page.getByTestId('period').fill('200');
+    await periodOf(page).fill('200');
     for (const source of SOURCES) {
-      await page.getByTestId('source').selectOption(source);
+      await sourceOf(page).selectOption(source);
       expectSeriesClose(await smaData(page), refSMA(long, 200, source));
     }
   });
@@ -294,7 +295,7 @@ test.describe('2000 bars', () => {
     await page.getByTestId('scenario').selectOption('long');
     const ms = await page.evaluate(() => {
       const t = performance.now();
-      const inp = document.getElementById('period');
+      const inp = document.getElementById('period-sma');
       for (let p = 1; p <= 50; p++) { inp.value = String(p * 4); inp.dispatchEvent(new Event('input')); }
       return performance.now() - t;
     });
@@ -335,8 +336,8 @@ test.describe('performance and long-lived chart resources', () => {
     expect(setDataMs).toBeLessThan(1000);
 
     const redrawMs = await page.evaluate(() => {
-      const source = document.getElementById('source');
-      const period = document.getElementById('period');
+      const source = document.getElementById('source-sma');
+      const period = document.getElementById('period-sma');
       const started = performance.now();
       for (let i = 0; i < 25; i++) {
         source.value = ['close', 'hl2', 'hlc3', 'ohlc4'][i % 4];
@@ -386,11 +387,16 @@ test.describe('performance and long-lived chart resources', () => {
       const removeSeries = chart.removeSeries.bind(chart);
       chart.addSeries = (...args) => { added++; return addSeries(...args); };
       chart.removeSeries = (...args) => { removed++; return removeSeries(...args); };
-      const indicator = document.getElementById('indicator');
       const kinds = ['sma', 'ema', 'bb', 'rsi'];
-      for (let i = 0; i < 160; i++) {
-        indicator.value = kinds[i % kinds.length];
-        indicator.dispatchEvent(new Event('change'));
+      const setOn = (kind, on) => {
+        const box = document.getElementById(`ind-${kind}`);
+        box.checked = on;
+        box.dispatchEvent(new Event('change'));
+      };
+      for (let i = 0; i < 160; i++) { // the one that is on changes every time: the next is switched on, the others off
+        const next = kinds[i % kinds.length];
+        setOn(next, true);
+        for (const k of kinds) if (k !== next) setOn(k, false);
       }
       const active = Object.keys(window.__app.lineSeries()).length;
       return { added, removed, active, difference: added - removed };

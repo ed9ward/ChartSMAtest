@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect, open } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { PROVIDERS } from '../../src/providers.js';
 import { computeIndicator } from '../../src/indicators.js';
 import { compareSeries } from '../../checks/reference.js';
@@ -102,7 +103,7 @@ for (const exchange of Object.keys(PROVIDERS)) {
           await goTo(page, exchange, symbol);
           const candles = (await page.evaluate(() => window.__app.candleData())).map((c) => ({ ...c, volume: 1 }));
           for (const kind of ['sma', 'ema', 'bb', 'rsi']) {
-            await page.getByTestId('indicator').selectOption(kind);
+            await only(page, kind);
             const params = await page.evaluate(() => { const s = window.__app.state(); return { period: s.period, mult: s.mult, start: s.start }; });
             const want = computeIndicator(kind, candles, params, 'close');
             for (const [key, points] of Object.entries(want)) {
@@ -130,7 +131,7 @@ for (const exchange of Object.keys(PROVIDERS)) {
           send(exchange === 'binance' ? kline(symbol, price) : match(symbol, 1001, price));
           await expect(page.getByTestId('last-close')).toHaveText(price.toFixed(2));
           const lastSma = await page.evaluate(() => window.__app.smaData().at(-1).value);
-          await expect(page.getByTestId('last-sma')).toHaveText(lastSma.toFixed(2));
+          await expect(mainValue(page)).toHaveText(lastSma.toFixed(2));
         });
 
         test('shows the change per day from its own daily candles', async ({ page }) => {

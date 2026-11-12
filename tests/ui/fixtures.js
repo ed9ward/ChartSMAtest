@@ -38,3 +38,29 @@ export async function expectLineAt(page, { key, tolerance = 3 } = {}) {
   await expect.poll(async () => offsetFromExpected(await probeLine(page, key)), { message: `line ${key ?? '(main)'}` })
     .toBeLessThanOrEqual(tolerance);
 }
+
+// --- several indicators at once --------------------------------------------------------------------------------------
+// Every indicator has its own switch, period and source. Most tests work with one indicator at a time, as the old single
+// selector did: `only` switches that one on and the others off, and the helpers below then mean "the indicator of this test".
+export const INDICATOR_KINDS = ['sma', 'ema', 'bb', 'rsi'];
+const current = new WeakMap(); // page -> the indicator the test is working with
+export const kindOf = (page) => current.get(page) ?? 'sma';
+
+export async function only(page, kind) {
+  const before = kindOf(page);
+  for (const k of INDICATOR_KINDS) {
+    const box = page.getByTestId(`ind-${k}`);
+    if ((await box.isChecked()) !== (k === kind)) await box.setChecked(k === kind);
+  }
+  if (before !== kind) { // the old selector had one source for all: carry it over to the indicator that takes over
+    const source = await page.getByTestId(`source-${before}`).inputValue();
+    await page.getByTestId(`source-${kind}`).selectOption(source);
+  }
+  current.set(page, kind);
+}
+
+export const periodOf = (page, kind = kindOf(page)) => page.getByTestId(`period-${kind}`);
+export const sourceOf = (page, kind = kindOf(page)) => page.getByTestId(`source-${kind}`);
+export const LEGEND_VALUE = { sma: 'last-sma', ema: 'last-ema', bb: 'last-bb-basis', rsi: 'last-rsi' };
+export const mainValue = (page, kind = kindOf(page)) => page.getByTestId(LEGEND_VALUE[kind]);
+export const labelOf = (page, kind = kindOf(page)) => page.getByTestId(`legend-label-${kind}`);

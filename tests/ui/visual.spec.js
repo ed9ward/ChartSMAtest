@@ -1,4 +1,5 @@
 import { test, expect, open } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 
 // What is really drawn on the canvas, not only what the chart was given.
 // Every check reads the pixels of the chart (chart.takeScreenshot()) and compares them with the geometry the chart
@@ -158,7 +159,7 @@ test.describe('candles on the canvas', () => {
 test.describe('the RSI panel', () => {
   async function rsiPanel(page) {
     await open(page);
-    await page.getByTestId('indicator').selectOption('rsi');
+    await only(page, 'rsi');
     await settled(page);
   }
 
@@ -226,7 +227,7 @@ test.describe('the RSI panel', () => {
   test('the RSI line is drawn at its value and in its colour, whatever the period', async ({ page }) => {
     await rsiPanel(page);
     for (const period of ['2', '14', '30']) {
-      await page.getByTestId('period').fill(period);
+      await periodOf(page).fill(period);
       await settled(page);
       const probe = await page.evaluate(() => window.__app.probeLine('rsi'));
       expect(probe.ys.length, `RSI(${period}) is on the canvas`).toBeGreaterThan(0);
@@ -239,7 +240,7 @@ test.describe('the RSI panel', () => {
 test.describe('Bollinger Bands', () => {
   test('three lines in three colours, upper above the middle above the lower, each at its value', async ({ page }) => {
     await open(page);
-    await page.getByTestId('indicator').selectOption('bb');
+    await only(page, 'bb');
     await settled(page);
     const probes = {};
     for (const key of ['upper', 'basis', 'lower']) {
@@ -253,12 +254,12 @@ test.describe('Bollinger Bands', () => {
     expect(probes.basis.mean).toBeLessThan(probes.lower.mean);
     const colors = await page.evaluate(() => Object.fromEntries(Object.entries(window.__app.lineSeries()).map(([k, s]) => [k, s.options().color])));
     expect(new Set(Object.values(colors)).size).toBe(3);          // three different colours
-    expect(colors).toEqual({ basis: '#FF9800', upper: '#9C27B0', lower: '#3F51B5' });
+    expect(colors).toEqual({ basis: '#795548', upper: '#9C27B0', lower: '#3F51B5' });
   });
 
   test('the bands are not filled: between the lines the canvas is the background, where no candle is', async ({ page }) => {
     await open(page);
-    await page.getByTestId('indicator').selectOption('bb');
+    await only(page, 'bb');
     await page.getByTestId('mult').fill('3');
     await settled(page);
     const filled = await page.evaluate(() => {

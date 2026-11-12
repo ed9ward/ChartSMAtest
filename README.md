@@ -8,7 +8,7 @@ A small trading chart (TradingView [Lightweight Charts](https://github.com/tradi
 
 ### What it does
 
-- **Indicators:** SMA, EMA (two starts: first value as TradingView, or SMA of the first N as TA-Lib), Bollinger Bands, RSI (Wilder). Sources: open, high, low, close, volume, hl2, hlc3, ohlc4. Any period.
+- **Indicators:** SMA, EMA (two starts: first value as TradingView, or SMA of the first N as TA-Lib), Bollinger Bands, RSI (Wilder). Sources: open, high, low, close, volume, hl2, hlc3, ohlc4. Any period. **All four can be on at the same time**: each has its own switch, period and source (and the EMA its start, Bollinger its multiplier), its own line colour and its own legend entry; the RSI keeps its own panel.
 - **Data:** a seeded demo feed (13 scenarios: normal, 2000 bars, negative, huge, tiny, overflow, NaN, impossible candles, duplicates, unordered, flat, stalled, empty), **Binance** (BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT) and **Coinbase** (BTC-USD, ETH-USD, SOL-USD) live data, timeframes 1m, 5m, 15m, 1h, 1d. No API keys.
 - **Data checks:** strict number parsing (null, empty strings, hex, NaN, off-grid timestamps are rejected), the candle rule (high/low must contain open/close, volume not negative), duplicates merged, order fixed, missing intervals reported. Rejected data is counted in the status bar, never drawn.
 - **Live reliability:** automatic reconnect (1, 2, 4, 8, 16, 30 s), silence watchdog (30 s Binance, 10 s Coinbase), Coinbase trade numbering kept and lost trades recovered over REST, closed candles checked against the exchange, history capped at 1000 bars, day change by the exchange's own clock.
@@ -93,7 +93,7 @@ python scripts/make-reference.py
 
 ### Что умеет
 
-- **Индикаторы:** SMA, EMA (два старта: первое значение как в TradingView или SMA первых N как в TA-Lib), полосы Боллинджера, RSI (по Уайлдеру). Источники: open, high, low, close, volume, hl2, hlc3, ohlc4. Любой период.
+- **Индикаторы:** SMA, EMA (два старта: первое значение как в TradingView или SMA первых N как в TA-Lib), полосы Боллинджера, RSI (по Уайлдеру). Источники: open, high, low, close, volume, hl2, hlc3, ohlc4. Любой период. **Можно включить все четыре одновременно**: у каждого свой флажок, период и источник (у EMA ещё старт, у Bollinger множитель), свой цвет линии и своя строка в легенде; RSI остаётся в своей панели.
 - **Данные:** демо-поток с фиксированным зерном (13 сценариев: обычный, 2000 баров, отрицательные, огромные, мелкие цены, переполнение, NaN, невозможные свечи, дубли, неупорядоченные, плоский, застывший, пустой), живые данные **Binance** (BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT) и **Coinbase** (BTC-USD, ETH-USD, SOL-USD), таймфреймы 1m, 5m, 15m, 1h, 1d. Ключи API не нужны.
 - **Проверка данных:** строгий разбор чисел (null, пустые строки, hex, NaN и время не по сетке отклоняются), правило свечи (high и low охватывают open и close, объём не отрицательный), дубли склеиваются, порядок исправляется, пропуски интервалов отмечаются. Отклонённые данные считаются в строке статуса и не рисуются.
 - **Надёжность живого потока:** автопереподключение (1, 2, 4, 8, 16, 30 с), контроль «тишины» (30 с у Binance, 10 с у Coinbase), у Coinbase отслеживается нумерация сделок и потерянные докачиваются через REST, закрытые свечи сверяются с биржей, история ограничена 1000 баров, смена суток по часам биржи.

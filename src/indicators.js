@@ -155,7 +155,7 @@ export const INDICATORS = {
   bb: {
     label: 'BB', defaults: { period: 20, mult: 2 },
     lines: [
-      { key: 'basis', color: '#FF9800', primary: true },
+      { key: 'basis', color: '#795548', primary: true },
       { key: 'upper', color: '#9C27B0' },
       { key: 'lower', color: '#3F51B5' },
     ],

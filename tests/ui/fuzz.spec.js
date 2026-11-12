@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect, open } from './fixtures.js';
+import { only, periodOf, sourceOf, mainValue, labelOf } from './fixtures.js';
 import { mulberry32 } from '../../src/generator.js';
 import { computeIndicator, settleBars, minBars } from '../../src/indicators.js';
 import { compareSeries } from '../../checks/reference.js';
@@ -49,9 +50,9 @@ async function applyOp(page, m, rnd, log) {
   if (kind < 0.14) return sel('scenario', pick(rnd, SCENARIOS));
   if (kind < 0.22) { const s = await page.getByTestId('symbol').locator('option').allTextContents(); return sel('symbol', pick(rnd, s)); }
   if (kind < 0.30) return sel('interval', pick(rnd, ['1m', '5m', '15m', '1h', '1d']));
-  if (kind < 0.38) return sel('indicator', pick(rnd, INDICATORS));
-  if (kind < 0.44) return sel('source', pick(rnd, SOURCES));
-  if (kind < 0.50) { const v = pick(rnd, ['1', '2', '5', '14', '20', '50', '200', '0', '-3', '1.5', '']); log.push(`period=${v}`); return page.getByTestId('period').fill(v, { timeout: 2000 }); }
+  if (kind < 0.38) { const k = pick(rnd, INDICATORS); const on = rnd() < 0.6; log.push(`${k} ${on ? 'on' : 'off'}`); return page.getByTestId(`ind-${k}`).setChecked(on, { timeout: 2000 }); }
+  if (kind < 0.44) { const k = pick(rnd, INDICATORS); const v = pick(rnd, SOURCES); log.push(`source-${k}=${v}`); return page.getByTestId(`source-${k}`).selectOption(v, { timeout: 2000 }); }
+  if (kind < 0.50) { const v = pick(rnd, ['1', '2', '5', '14', '20', '50', '200', '0', '-3', '1.5', '']); log.push(`period=${v}`); const k = pick(rnd, INDICATORS); return periodOf(page, k).fill(v, { timeout: 2000 }); }
   if (kind < 0.53) { const v = pick(rnd, ['0', '1', '2', '3.5', '-1', '']); log.push(`mult=${v}`); return page.getByTestId('mult').fill(v, { timeout: 300 }).catch(() => {}); } // hidden unless Bollinger: skip quickly
   if (kind < 0.56) { const v = pick(rnd, ['first', 'sma']); log.push(`ema-start=${v}`); return page.getByTestId('ema-start').selectOption(v, { timeout: 300 }).catch(() => {}); } // hidden unless EMA
   if (kind < 0.62) { log.push('step'); return page.evaluate(() => window.__app.step()); }
@@ -94,12 +95,15 @@ async function applyOp(page, m, rnd, log) {
 async function checkInvariants(page, m, trail) {
   const where = `after: ${trail.slice(-12).join(' | ')}`;
   const s = await page.evaluate(() => ({
-    app: window.__app.state(), candles: window.__app.candleData(),
+    app: window.__app.state(), candles: window.__app.candleData(), raw: window.__app.rawCandleData(),
     lines: Object.fromEntries(Object.keys(window.__app.lineSeries()).map((k) => [k, window.__app.lineData(k)])),
     status: document.getElementById('status').textContent,
     legendClose: document.getElementById('last-close').textContent,
     precision: window.__app.candleSeries.options().priceFormat.precision,
-    note: { hidden: document.getElementById('settle-note').hidden },
+    notes: [...document.querySelectorAll('[data-testid^="settle-note-"]')].map((e) => e.dataset.testid.replace('settle-note-', '')),
+    noteBoxHidden: document.getElementById('settle-note').hidden,
+    legendShown: Object.fromEntries(['sma', 'ema', 'bb', 'rsi'].map((k) => [k, !document.getElementById(`legend-${k}`).hidden])),
+    panes: window.__app.chart.panes().length,
     barCount: document.getElementById('bar-count').textContent,
   }));
 
@@ -112,12 +116,19 @@ async function checkInvariants(page, m, trail) {
     expect(c.low, `${where}: low`).toBeLessThanOrEqual(Math.min(c.open, c.close));
   });
 
-  // the lines are exactly what the indicator gives for the candles on the chart (volume is not in the chart data: skip that source)
-  if (s.app.source !== 'volume' && s.candles.length) {
-    const candles = s.candles.map((c) => ({ ...c, volume: 1 }));
-    const want = computeIndicator(s.app.indicator, candles, { period: s.app.period, mult: s.app.mult, start: s.app.start }, s.app.source);
-    for (const [key, points] of Object.entries(want)) {
-      expect(() => compareSeries(s.lines[key], points, 6), `${where}: line ${key} (${s.app.indicator}/${s.app.source}/${s.app.period})`).not.toThrow();
+  // every indicator that is on gives exactly what the reference gives for the bars on the chart and its own settings;
+  // the ones that are off have no lines, no legend and no pane
+  const LINES = { sma: ['sma'], ema: ['ema'], bb: ['basis', 'upper', 'lower'], rsi: ['rsi'] };
+  expect(Object.keys(s.lines).sort(), `${where}: which lines exist`).toEqual(s.app.enabled.flatMap((k) => LINES[k]).sort());
+  expect(s.panes, `${where}: panes`).toBe(s.app.enabled.includes('rsi') ? 2 : 1);
+  for (const kind of ['sma', 'ema', 'bb', 'rsi']) expect(s.legendShown[kind], `${where}: legend of ${kind}`).toBe(s.app.enabled.includes(kind));
+  if (s.raw.length) {
+    for (const kind of s.app.enabled) {
+      const cfg = s.app.indicators[kind];
+      const want = computeIndicator(kind, s.raw, { period: cfg.period, mult: cfg.mult, start: cfg.start }, cfg.source);
+      for (const [key, points] of Object.entries(want)) {
+        expect(() => compareSeries(s.lines[key], points, 6), `${where}: line ${key} (${kind}/${cfg.source}/${cfg.period})`).not.toThrow();
+      }
     }
   }
 
@@ -131,11 +142,16 @@ async function checkInvariants(page, m, trail) {
   // after Disconnect nothing connects by itself, however long we wait
   if (m.state.userOff && ['binance', 'coinbase'].includes(s.app.scenario)) expect(open, `${where}: connected again after Disconnect`).toBe(0);
 
-  // the note about indicators that have not settled says what settleBars says
-  const needed = settleBars(s.app.indicator, s.app.period, { start: s.app.start });
-  const first = minBars(s.app.indicator, s.app.period, { start: s.app.start });
+  // each indicator that is on has a note exactly when settleBars/minBars say so, and the ones that are off have none
   const bars = s.candles.length;
-  expect(s.note.hidden, `${where}: settle note`).toBe(!((bars > 0 && bars < first) || (needed > 0 && bars > 0 && bars < needed)));
+  const expectedNotes = s.app.enabled.filter((kind) => {
+    const cfg = s.app.indicators[kind];
+    const needed = settleBars(kind, cfg.period, { start: cfg.start });
+    const first = minBars(kind, cfg.period, { start: cfg.start });
+    return (bars > 0 && bars < first) || (needed > 0 && bars > 0 && bars < needed);
+  });
+  expect(s.notes, `${where}: settle notes`).toEqual(expectedNotes);
+  expect(s.noteBoxHidden, `${where}: settle note box`).toBe(expectedNotes.length === 0);
 
   // the legend shows the last close with the decimals the price scale uses
   if (s.candles.length) expect(s.legendClose, `${where}: legend close`).toBe(s.candles.at(-1).close.toFixed(s.precision));
