@@ -589,10 +589,24 @@ function probeLine(key = primaryLine()?.key) {
   const x = Math.round(chart.timeScale().timeToCoordinate(last.time)) - 1; // the line ends at the bar centre
   const canvas = chart.takeScreenshot();
   const px = canvas.getContext('2d').getImageData(x, 0, 1, canvas.height).data;
-  const rgb = [1, 3, 5].map((i) => parseInt(line.def.color.slice(i, i + 2), 16));
+  const toRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const rgb = toRgb(line.def.color);
+  const others = lines.filter((l) => l !== line && l.def.color !== line.def.color).map((l) => toRgb(l.def.color));
   const ys = [];
-  for (let y = 0; y < canvas.height; y++) if (isLineColor(px.subarray(y * 4, y * 4 + 3), rgb)) ys.push(y);
+  for (let y = 0; y < canvas.height; y++) {
+    const p = px.subarray(y * 4, y * 4 + 3);
+    // a pixel of this line's colour, and not one that another line's colour explains better (blue and indigo are close)
+    if (isLineColor(p, rgb) && !others.some((o) => blendError(p, o) + 2 < blendError(p, rgb))) ys.push(y);
+  }
   return { expectedY: line.series.priceToCoordinate(last.value) + offset, ys, height: canvas.height };
+}
+
+// How far a pixel is from the nearest blend of a colour with the white background (0: exactly that colour or one of its blends).
+function blendError(p, rgb) {
+  let along = 0, norm = 0;
+  for (let i = 0; i < 3; i++) { along += (p[i] - rgb[i]) * (255 - rgb[i]); norm += (255 - rgb[i]) ** 2; }
+  const t = norm === 0 ? 0 : Math.min(1, Math.max(0, along / norm));
+  return Math.hypot(...[0, 1, 2].map((i) => p[i] - (rgb[i] + t * (255 - rgb[i]))));
 }
 
 // True for the line colour and for its anti-aliased blends with the white background.

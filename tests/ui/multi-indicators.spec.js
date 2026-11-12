@@ -57,8 +57,11 @@ test.describe('switching indicators on and off', () => {
 
   test('every line is drawn at the right height on the canvas, all four on', async ({ page }) => {
     await switchOn(page, 'ema', 'bb', 'rsi');
-    // with the same period and source the SMA and the middle band are one and the same line, and one hides the other
-    await page.getByTestId('period-bb').fill('27');
+    // Settings that keep the five lines of the price panel far apart at the last bar (more than 10 px): with the same period
+    // and source the SMA and the middle band are one and the same line, and lines a pixel or two apart cannot be told apart.
+    await page.getByTestId('period-sma').fill('5');   await page.getByTestId('source-sma').selectOption('low');
+    await page.getByTestId('period-ema').fill('50');  await page.getByTestId('source-ema').selectOption('high');
+    await page.getByTestId('period-bb').fill('100'); await page.getByTestId('source-bb').selectOption('high');
     for (const key of ['sma', 'ema', 'basis', 'upper', 'lower', 'rsi']) await expectLineAt(page, { key });
   });
 
