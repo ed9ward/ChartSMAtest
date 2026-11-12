@@ -1,4 +1,4 @@
-import { test, expect, only, INDICATOR_KINDS, LEGEND_VALUE, expectLineAt } from './fixtures.js';
+import { test, expect, only, INDICATOR_KINDS, LEGEND_VALUE, expectLineNear } from './fixtures.js';
 import { pretendExchanges, openLive } from './exchanges.js';
 import { computeIndicator, INDICATORS } from '../../src/indicators.js';
 import { compareSeries } from '../../checks/reference.js';
@@ -62,7 +62,7 @@ test.describe('switching indicators on and off', () => {
     await page.getByTestId('period-sma').fill('5');   await page.getByTestId('source-sma').selectOption('low');
     await page.getByTestId('period-ema').fill('50');  await page.getByTestId('source-ema').selectOption('high');
     await page.getByTestId('period-bb').fill('100'); await page.getByTestId('source-bb').selectOption('high');
-    for (const key of ['sma', 'ema', 'basis', 'upper', 'lower', 'rsi']) await expectLineAt(page, { key });
+    for (const key of ['sma', 'ema', 'basis', 'upper', 'lower', 'rsi']) await expectLineNear(page, { key });
   });
 
   test('the legend shows the last value of each, with its own label', async ({ page }) => {

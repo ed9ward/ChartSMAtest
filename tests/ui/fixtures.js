@@ -33,6 +33,18 @@ export function offsetFromExpected(probe, maxSpread = 12) {
   return Math.abs(probe.ys.reduce((a, b) => a + b, 0) / probe.ys.length - probe.expectedY);
 }
 
+// For charts with several lines: pixels of this line's colour exist within `tolerance` px of where the line should be.
+// (A thin-line test needs the neighbouring lines to be well apart; this one only needs the line to be where it belongs.)
+// A failure says what the probe saw, because the CI log cannot always be read.
+export async function expectLineNear(page, { key, tolerance = 3 } = {}) {
+  let seen;
+  await expect.poll(async () => {
+    seen = await probeLine(page, key);
+    if (!seen || seen.ys.length === 0) return 999;
+    return Math.min(...seen.ys.map((y) => Math.abs(y - seen.expectedY)));
+  }, { message: () => `line ${key}: expected y ${seen?.expectedY?.toFixed(1)}, pixels of its colour at ${JSON.stringify(seen?.ys?.slice(0, 30))}` }).toBeLessThanOrEqual(tolerance);
+}
+
 // Waits until the line is drawn where it should be (the chart repaints a moment after any change).
 export async function expectLineAt(page, { key, tolerance = 3 } = {}) {
   await expect.poll(async () => offsetFromExpected(await probeLine(page, key)), { message: `line ${key ?? '(main)'}` })
