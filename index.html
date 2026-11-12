@@ -53,10 +53,10 @@
   <div class="row">
     <label>Data
       <select id="scenario" data-testid="scenario">
-        <option>normal</option><option>long</option><option>negative</option><option>huge</option><option>overflow</option>
-        <option>nan</option><option>inconsistent</option><option>flat</option><option>stalled</option><option>tiny</option><option>duplicates</option><option>unordered</option><option>empty</option>
         <option value="binance">Binance live</option>
         <option value="coinbase">Coinbase live</option>
+        <!-- synthetic data sets: only with ?demo (for tests and development) -->
+        <option class="demo">normal</option><option class="demo">long</option><option class="demo">negative</option><option class="demo">huge</option><option class="demo">overflow</option><option class="demo">nan</option><option class="demo">inconsistent</option><option class="demo">flat</option><option class="demo">stalled</option><option class="demo">tiny</option><option class="demo">duplicates</option><option class="demo">unordered</option><option class="demo">empty</option>
       </select>
     </label>
     <label>Symbol

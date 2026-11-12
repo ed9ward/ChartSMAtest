@@ -11,7 +11,7 @@ export function createUiDriver(frame) {
     el: (id) => win().document.getElementById(id),
     text: (id) => driver.el(id).textContent,
     async load(query = '') {
-      await new Promise((resolve) => { frame.onload = resolve; frame.src = `index.html${query}`; });
+      await new Promise((resolve) => { const q = new URLSearchParams(query); q.set('demo', '1'); frame.onload = resolve; frame.src = `index.html?${q}`; });
       for (let i = 0; i < 100 && !win().__app; i++) await new Promise((r) => setTimeout(r, 20));
       assert(win().__app, 'the page did not start');
       win().addEventListener('error', (e) => errors.push(e.message));

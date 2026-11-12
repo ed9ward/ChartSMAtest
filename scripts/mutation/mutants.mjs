@@ -154,4 +154,9 @@ export const MUTANTS = [
   { id: 'multi-source-shared-by-all', file: 'src/app.js', from: "state.indicators[kind].source = ctl[kind].source.value;", to: "for (const k of KINDS) state.indicators[k].source = ctl[kind].source.value;", ui: U('own settings', ['tests/ui/multi-indicators.spec.js']) },
   { id: 'multi-rsi-read-with-price-decimals', file: 'src/app.js', from: "const decimals = kind === 'rsi' ? 2 :", to: "const decimals = false ? 2 :", ui: U('own number of decimals|RSI below 1', ['tests/ui/multi-indicators.spec.js']) },
   { id: 'multi-tick-reaches-only-the-first', file: 'src/app.js', from: 'for (const kind of enabled()) latest[kind] = state.engines[kind].upsert(candle);', to: 'for (const kind of enabled().slice(0, 1)) latest[kind] = state.engines[kind].upsert(candle);', ui: U('stream with all four', ['tests/ui/multi-indicators.spec.js']) },
+
+  // --- which data sources a user is offered (tests/ui/data-sources.spec.js) -------------------------------------------------
+  { id: 'page-synthetic-sets-always-offered', file: 'src/app.js', from: 'if (!DEMO) {\n  for (const option', to: 'if (false) {\n  for (const option', ui: U('as a user opens it|development page', ['tests/ui/data-sources.spec.js']) },
+  { id: 'page-opens-on-a-synthetic-set', file: 'src/app.js', from: "const firstData = DEMO ? 'normal' : 'binance';", to: "const firstData = 'normal';", ui: U('as a user opens it|development page', ['tests/ui/data-sources.spec.js']) },
+  { id: 'page-demo-buttons-shown-on-the-live-page', file: 'src/app.js', from: '  el.start.hidden = true; // the demo stream buttons have nothing to do on a live exchange', to: '', ui: U('as a user opens it|development page', ['tests/ui/data-sources.spec.js']) },
 ];

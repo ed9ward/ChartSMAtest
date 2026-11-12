@@ -12,8 +12,11 @@ export const test = base.extend({
 });
 export { expect };
 
+// The synthetic data sets are only there with ?demo, so most tests open the page that way.
 export async function open(page, query = '') {
-  await page.goto('/' + query);
+  const q = new URLSearchParams(query);
+  q.set('demo', '1');
+  await page.goto(`/?${q}`);
   await page.waitForFunction(() => window.__app);
 }
 

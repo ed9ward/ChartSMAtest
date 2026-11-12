@@ -99,7 +99,7 @@ test.describe('self-checks page', () => {
   });
 
   test('the chart page links to the checks', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?demo');
     await page.getByTestId('open-checks').click();
     await expect(page).toHaveURL(/checks\.html$/);
   });

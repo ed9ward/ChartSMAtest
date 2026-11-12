@@ -15,6 +15,8 @@ const MAX_LIVE_CANDLES = 1000;
 const STREAMABLE = new Set(['normal', 'long', 'empty']); // data sets that are a prefix of the feed
 // Demo switch so the tests can prove they catch a broken indicator: ?bug=offbyone
 const BUG = new URLSearchParams(location.search).get('bug');
+// The synthetic data sets are for tests and development only: they appear with ?demo. Without it the page offers the two exchanges.
+const DEMO = new URLSearchParams(location.search).has('demo');
 
 const $ = (id) => document.getElementById(id);
 const el = Object.fromEntries(
@@ -577,7 +579,14 @@ el.disconnect.addEventListener('click', disconnect);
 el.reconnect.addEventListener('click', () => reconnect());
 
 buildLines();
-loadScenario('normal');
+if (!DEMO) {
+  for (const option of [...el.scenario.querySelectorAll('option.demo')]) option.remove();
+  el.start.hidden = true; // the demo stream buttons have nothing to do on a live exchange
+  el.stop.hidden = true;
+}
+const firstData = DEMO ? 'normal' : 'binance';
+el.scenario.value = firstData;
+loadScenario(firstData);
 
 // Reads the real chart canvas: where is the line of `key` drawn in the column of its last point, and where should it be?
 function probeLine(key = primaryLine()?.key) {
